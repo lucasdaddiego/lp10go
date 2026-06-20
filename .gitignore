@@ -1,0 +1,5 @@
+/lp10
+/lp10go
+*.test
+*.out
+/dist/

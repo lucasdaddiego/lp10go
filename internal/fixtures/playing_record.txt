@@ -1,0 +1,34 @@
+@@B
+MID-Read:42 Data:{
+	"CMD ID" : 3,
+	"Title" : "PlayView",
+	"Window CONTENTS" :
+	{
+		"Album" : "Canción Animal",
+		"Artist" : "Soda Stereo",
+		"CoverArtUrl" : "https://i.scdn.co/image/0000000000000000000000000000000000000000",
+		"Current Source" : 4,
+		"Mime" : "audio/ogg",
+		"Next" : true,
+		"PlayState" : 0,
+		"PlayUrl" : "spotify:track:0000000000000000000000",
+		"PlaybackSource" : "Spotify",
+		"Prev" : true,
+		"Repeat" : 0,
+		"SampleRate" : "44100",
+		"Seek" : true,
+		"Shuffle" : 0,
+		"Skip" : false,
+		"TotalTime" : 211000,
+		"TrackName" : "De Música Ligera"
+	}
+} Length:560
+@@p
+MID-Read:49 Data:30000 Length:5
+@@t
+MID-Read:51 Data:0 Length:1
+@@v
+MID-Read:64 Data:44 Length:2
+@@s
+12345.6 0.44 0.36 0.42 139000 221064 2 AR241CE_9243.16 Linux-5.15.137 52000 -54 64 137
+@@E

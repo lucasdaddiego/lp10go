@@ -1,0 +1,28 @@
+@@B
+MID-Read:42 Data:{
+	"CMD ID" : 3,
+	"Title" : "PlayView",
+	"Window CONTENTS" :
+	{
+		"Album" : "",
+		"Artist" : "",
+		"CoverArtUrl" : "",
+		"Current Source" : 0,
+		"Next" : true,
+		"PlayState" : 1,
+		"Prev" : true,
+		"Repeat" : -1,
+		"Seek" : false,
+		"Shuffle" : -1,
+		"Skip" : false,
+		"TotalTime" : -1,
+		"TrackName" : ""
+	}
+} Length:311
+@@p
+MID-Read:49 Data:4437 Length:4
+@@t
+MID-Read:51 Data:1 Length:1
+@@v
+MID-Read:64 Data:44 Length:2
+@@E

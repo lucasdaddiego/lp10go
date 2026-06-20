@@ -1,0 +1,12 @@
+@@i
+ip=192.168.1.40
+mac=aa:bb:cc:dd:ee:ff
+gw=192.168.1.1
+ssid=HomeWiFi
+freq=5180
+rate=780
+build=2025-12-24
+app=312
+platform=LS8
+data=1258291 7340032
+@@E

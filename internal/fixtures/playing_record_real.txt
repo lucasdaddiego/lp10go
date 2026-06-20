@@ -1,0 +1,35 @@
+@@B
+MID-Read:42 Data:{
+	"CMD ID" : 3,
+	"Title" : "PlayView",
+	"Window CONTENTS" : 
+	{
+		"Album" : "Blow By Blow",
+		"Artist" : "Jeff Beck",
+		"ChannelCount" : 2,
+		"CoverArtUrl" : "https://i.scdn.co/image/ab67616d0000b273b4602dce4645a9fe1f54137c",
+		"Current Source" : 4,
+		"Mime" : "Ogg",
+		"Next" : true,
+		"PlayState" : 0,
+		"PlayUrl" : "spotify:track:4zoQ3EqopTIGmK2c2rPV5t",
+		"PlaybackSource" : "Daily Mix 4",
+		"Prev" : false,
+		"Repeat" : 0,
+		"SampleRate" : "44100",
+		"Seek" : true,
+		"Shuffle" : 0,
+		"Skip" : false,
+		"TotalTime" : 341535,
+		"TrackName" : "Cause We've Ended as Lovers"
+	}
+} Length:581
+@@p
+MID-Read:49 Data:229457 Length:6
+@@t
+MID-Read:51 Data:0 Length:1
+@@v
+MID-Read:64 Data:50 Length:2
+@@s
+23456.7 0.51 0.40 0.38 141200 221064 2 AR241CE_9243.16 Linux-5.15.137
+@@E
