@@ -576,3 +576,74 @@ func TestClipNeverExceedsWidth(t *testing.T) {
 		t.Errorf("Clip(abcdef,1)=%q, want a (no room for ellipsis)", got)
 	}
 }
+
+// ---- now-playing marquee ----------------------------------------------------
+
+func TestDispWindow(t *testing.T) {
+	cases := []struct {
+		s      string
+		off, w int
+		want   string
+	}{
+		{"abcdef", 0, 3, "abc"},
+		{"abcdef", 2, 3, "cde"},
+		{"abcdef", 4, 4, "ef  "}, // past the end -> padded to w
+		{"ab", 0, 5, "ab   "},    // shorter than w -> padded
+		{"·a·b·c", 2, 2, "·b"},   // multibyte width-1 ('·' is 1 col)
+		{"abcdef", 0, 0, ""},     // zero width
+	}
+	for _, c := range cases {
+		got := dispWindow(c.s, c.off, c.w)
+		if got != c.want {
+			t.Errorf("dispWindow(%q,%d,%d) = %q, want %q", c.s, c.off, c.w, got, c.want)
+		}
+		if c.w > 0 && DispW(got) != c.w {
+			t.Errorf("dispWindow(%q,%d,%d) width = %d, want exactly %d", c.s, c.off, c.w, DispW(got), c.w)
+		}
+	}
+}
+
+func TestMarqueeFitsAndScrolls(t *testing.T) {
+	m, _, _ := makeModel(t)
+
+	// a line that fits is returned untouched (no padding, no scroll)
+	if got := m.marquee("short line", 40); got != "short line" {
+		t.Errorf("fitting line changed: %q", got)
+	}
+
+	long := "A very long album title that simply will not fit in this column"
+
+	// at scroll 0 it pauses on the head, exactly w wide
+	m.scroll = 0
+	head := m.marquee(long, 20)
+	if DispW(head) != 20 {
+		t.Fatalf("overflow window width = %d, want 20", DispW(head))
+	}
+	if !strings.HasPrefix(head, "A very long album ti") {
+		t.Errorf("head window = %q, want the start of the title", head)
+	}
+
+	// it stays on the head through the pause window...
+	m.scroll = marqueePauseCol * marqueeColTicks
+	if m.marquee(long, 20) != head {
+		t.Error("should still show the head during the pause")
+	}
+
+	// ...then scrolls (a different, still-exactly-w window)
+	m.scroll = (marqueePauseCol + 5) * marqueeColTicks
+	scrolled := m.marquee(long, 20)
+	if scrolled == head {
+		t.Error("should have scrolled past the head after the pause")
+	}
+	if DispW(scrolled) != 20 {
+		t.Errorf("scrolled window width = %d, want 20", DispW(scrolled))
+	}
+
+	// and it loops back to the head after a full cycle
+	strip := long + marqueeGap
+	cycle := (DispW(strip) + marqueePauseCol) * marqueeColTicks
+	m.scroll = cycle
+	if m.marquee(long, 20) != head {
+		t.Error("should loop back to the head after one full cycle")
+	}
+}

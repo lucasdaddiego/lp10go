@@ -74,6 +74,7 @@ type model struct {
 	pane          int // paneNow | paneEQ
 	eqFocus       int // EQ-strip display position (index into eqOrder)
 	frame         int // animation frame for the art motif (advances while playing)
+	scroll        int // tick counter driving the now-playing marquee (advances every tick)
 	diag          bool
 	showRemaining bool
 	flash         map[string]time.Time
@@ -408,6 +409,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		cmds := []tea.Cmd{tick()}
+		m.scroll++       // advance the now-playing marquee (independent of play state)
 		s := m.st.Snap() // one snapshot per tick, reused below
 		if s.Playing == 0 {
 			m.frame++ // advance the art motif only while playing
@@ -623,8 +625,37 @@ func (m *model) headerRow(s protocol.Snapshot, now time.Time, W int, full bool) 
 	return between(left, leftW, right, rightW, W)
 }
 
+// Now-playing marquee tuning: a line wider than its column scrolls horizontally,
+// looping with a gap and pausing briefly at the start so the head stays readable.
+const (
+	marqueeGap      = "      " // blank run between loop repetitions
+	marqueeColTicks = 2        // ticks per one-column shift (~200ms at the 100ms tick)
+	marqueePauseCol = 10       // columns of pause at the start of each loop
+)
+
+// marquee renders one now-playing line into width w: returned unchanged when it
+// fits, otherwise a scrolling w-wide window that loops over time (driven by the
+// model's tick counter, so all lines advance together).
+func (m *model) marquee(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if DispW(s) <= w {
+		return s
+	}
+	strip := s + marqueeGap
+	stripW := DispW(strip)
+	pos := (m.scroll / marqueeColTicks) % (stripW + marqueePauseCol)
+	off := 0
+	if pos > marqueePauseCol {
+		off = pos - marqueePauseCol
+	}
+	return dispWindow(strip+strip, off, w)
+}
+
 // metaLines renders the now-playing text: title, artist · album, and the
-// technical format line (or a connecting/idle message), each clipped to w.
+// technical format line (or a connecting/idle message). The track lines scroll
+// as a marquee when they overflow w; the idle messages are clipped.
 func (m *model) metaLines(s protocol.Snapshot, w int) []string {
 	t := s.Track
 	if t == nil {
@@ -658,9 +689,9 @@ func (m *model) metaLines(s protocol.Snapshot, w int) []string {
 		q = append(q, ql)
 	}
 	return []string{
-		m.sty.sBri.Render(Clip(name, w)),
-		m.sty.sDim.Render(Clip(second, w)),
-		m.sty.sDmr.Render(Clip(strings.Join(q, " · "), w)),
+		m.sty.sBri.Render(m.marquee(name, w)),
+		m.sty.sDim.Render(m.marquee(second, w)),
+		m.sty.sDmr.Render(m.marquee(strings.Join(q, " · "), w)),
 	}
 }
 

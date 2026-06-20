@@ -124,6 +124,48 @@ func Clip(s string, w int) string {
 	return b.String() + ell
 }
 
+// dispWindow returns the run of s covering display columns [off, off+w),
+// space-padded to exactly w columns so callers stay aligned. A double-width
+// rune straddling either edge is rendered as spaces for its visible cells.
+func dispWindow(s string, off, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	col, taken := 0, 0
+	for _, r := range s {
+		if taken >= w {
+			break
+		}
+		cw := charW(r)
+		end := col + cw
+		switch {
+		case end <= off: // entirely before the window
+		case col >= off && taken+cw <= w: // entirely inside
+			b.WriteRune(r)
+			taken += cw
+		default: // straddles an edge — fill its visible cells with spaces
+			lo, hi := off, off+w
+			if col > lo {
+				lo = col
+			}
+			if end < hi {
+				hi = end
+			}
+			for vis := hi - lo; vis > 0 && taken < w; vis-- {
+				b.WriteByte(' ')
+				taken++
+			}
+		}
+		col = end
+	}
+	for taken < w {
+		b.WriteByte(' ')
+		taken++
+	}
+	return b.String()
+}
+
 // Wrap greedily word-wraps s to at most maxLines lines of display width w. The
 // last line is ellipsized only if text still overflows; a lone word wider than
 // w is clipped. Returns nil for blank input.
