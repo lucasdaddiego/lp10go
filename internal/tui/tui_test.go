@@ -254,51 +254,6 @@ func TestDispW(t *testing.T) {
 	}
 }
 
-func TestWrap(t *testing.T) {
-	if got := Wrap("a short album", 40, 2); len(got) != 1 || got[0] != "a short album" {
-		t.Errorf("fits: %v", got)
-	}
-	if got := Wrap("", 40, 2); len(got) != 0 {
-		t.Errorf("empty: %v", got)
-	}
-	if got := Wrap("anything", 0, 2); len(got) != 0 {
-		t.Errorf("zero width: %v", got)
-	}
-	if got := Wrap("alpha beta gamma", 10, 2); len(got) != 2 || got[0] != "alpha beta" || got[1] != "gamma" {
-		t.Errorf("two lines: %v", got)
-	}
-	out := Wrap("alpha beta gamma delta epsilon", 10, 2)
-	if len(out) != 2 || out[0] != "alpha beta" || !strings.HasSuffix(out[len(out)-1], GL["ell"]) {
-		t.Errorf("ellipsized overflow: %v", out)
-	}
-	if got := Wrap("one two three four five six", 9, 2); len(got) != 2 {
-		t.Errorf("max lines: %v", got)
-	}
-}
-
-func TestAlbumLine(t *testing.T) {
-	if got := AlbumLine(protocol.Track{"Album": "Blow By Blow", "PlaybackSource": "Daily Mix 4"}); got != "Blow By Blow · Daily Mix 4" {
-		t.Errorf("join: %q", got)
-	}
-	echoTitle := protocol.Track{
-		"TrackName":      "There Is a Light That Never Goes Out - Take 1",
-		"Album":          "The Queen Is Dead (Deluxe Edition)",
-		"PlaybackSource": "there is a light that never goes out - take 1",
-	}
-	if got := AlbumLine(echoTitle); got != "The Queen Is Dead (Deluxe Edition)" {
-		t.Errorf("echo title: %q", got)
-	}
-	if got := AlbumLine(protocol.Track{"Album": "Canción Animal", "PlaybackSource": " Canción Animal "}); got != "Canción Animal" {
-		t.Errorf("echo album: %q", got)
-	}
-	if AlbumLine(nil) != "" || AlbumLine(protocol.Track{}) != "" {
-		t.Error("blank inputs should yield empty")
-	}
-	if got := AlbumLine(protocol.Track{"PlaybackSource": "Spotify"}); got != "Spotify" {
-		t.Errorf("source only: %q", got)
-	}
-}
-
 func TestSourceName(t *testing.T) {
 	if SourceName(nil) != "" || SourceName(protocol.Track{}) != "" || SourceName(protocol.Track{"Current Source": 0}) != "" {
 		t.Error("unknown source should be blank")

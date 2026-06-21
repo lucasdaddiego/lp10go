@@ -166,40 +166,6 @@ func dispWindow(s string, off, w int) string {
 	return b.String()
 }
 
-// Wrap greedily word-wraps s to at most maxLines lines of display width w. The
-// last line is ellipsized only if text still overflows; a lone word wider than
-// w is clipped. Returns nil for blank input.
-func Wrap(s string, w, maxLines int) []string {
-	if w <= 0 || s == "" {
-		return nil
-	}
-	if DispW(s) <= w {
-		return []string{s}
-	}
-	words := strings.Fields(s)
-	var lines []string
-	i := 0
-	for i < len(words) && len(lines) < maxLines {
-		cur := ""
-		for i < len(words) {
-			cand := strings.TrimSpace(cur + " " + words[i])
-			if cur != "" && DispW(cand) > w {
-				break
-			}
-			cur = cand
-			i++
-		}
-		if len(lines) == maxLines-1 && i < len(words) {
-			cur = Clip(strings.TrimSpace(cur+" "+strings.Join(words[i:], " ")), w)
-			i = len(words)
-		} else if DispW(cur) > w {
-			cur = Clip(cur, w)
-		}
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
 // SourceName resolves the playback source label from the track's URL/source id.
 func SourceName(t protocol.Track) string {
 	if t == nil {
@@ -245,28 +211,4 @@ func Quality(t protocol.Track) string {
 		bits = append(bits, strconv.FormatFloat(float64(sr)/1000, 'g', -1, 64)+" kHz")
 	}
 	return strings.Join(bits, " · ")
-}
-
-// AlbumLine renders "Album · PlaybackSource", dropping the source when it merely
-// echoes the track or album title.
-func AlbumLine(t protocol.Track) string {
-	if t == nil {
-		return ""
-	}
-	src := t.Str("PlaybackSource")
-	if src != "" {
-		sc := strings.ToLower(strings.TrimSpace(src))
-		if sc == strings.ToLower(strings.TrimSpace(t.Str("TrackName"))) ||
-			sc == strings.ToLower(strings.TrimSpace(t.Str("Album"))) {
-			src = ""
-		}
-	}
-	var parts []string
-	if al := t.Str("Album"); al != "" {
-		parts = append(parts, al)
-	}
-	if src != "" {
-		parts = append(parts, src)
-	}
-	return strings.Join(parts, " · ")
 }
