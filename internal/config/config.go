@@ -34,27 +34,35 @@ func homeDir() string {
 // Defaults mirror config.DEFAULTS. Field order is irrelevant; types drive the
 // strict TOML coercion below.
 const (
-	defHost    = "192.168.1.13"
-	defUser    = "root"
-	defName    = "LP10 · Living"
-	defVolStep = 2
+	defHost     = "lp10.local" // fallback host; discovery (on by default) finds the real one
+	defUser     = "root"
+	defName     = "LP10 · Living"
+	defVolStep  = 2
+	defPingHost = "spotify.com" // diagnostics: the device's internet-latency target
 )
+
+// HostEnv pins the device host for a single run, overriding config and skipping
+// mDNS discovery.
+const HostEnv = "LP10_HOST"
 
 // Config is the resolved runtime configuration. Warn carries a config-load
 // problem to surface in the UI (empty string == no warning).
 type Config struct {
-	Host    string
-	User    string
-	Name    string
-	VolStep int
-	Warn    string
+	Host       string
+	User       string
+	Name       string
+	VolStep    int
+	PingHost   string // diagnostics overlay: device's internet-ping target
+	Discover   bool   // attempt mDNS auto-discovery at startup (config input)
+	Discovered bool   // set at runtime when discovery resolved the host
+	Warn       string
 }
 
 // Load reads ~/.config/lp10/config.toml (honoring XDG_CONFIG_HOME), applies the
 // same strict per-field typing as the Python version, clamps vol_step, and lets
 // LP10_HOST override the host for a single run.
 func Load() Config {
-	cfg := Config{Host: defHost, User: defUser, Name: defName, VolStep: defVolStep}
+	cfg := Config{Host: defHost, User: defUser, Name: defName, VolStep: defVolStep, PingHost: defPingHost, Discover: true}
 
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
@@ -87,7 +95,7 @@ func Load() Config {
 	} else if cfg.VolStep > 100 {
 		cfg.VolStep = 100
 	}
-	if h := os.Getenv("LP10_HOST"); h != "" {
+	if h := os.Getenv(HostEnv); h != "" {
 		cfg.Host = h
 	}
 	return cfg
@@ -106,6 +114,12 @@ func applyTOML(cfg *Config, data map[string]interface{}) {
 	}
 	if v, ok := data["name"].(string); ok {
 		cfg.Name = v
+	}
+	if v, ok := data["ping_host"].(string); ok {
+		cfg.PingHost = v
+	}
+	if v, ok := data["discover"].(bool); ok {
+		cfg.Discover = v
 	}
 	switch v := data["vol_step"].(type) {
 	case int64:

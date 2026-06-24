@@ -157,13 +157,14 @@ func SpawnEnv() []string {
 // BusyBox-ash streaming loop. See lp10lib/transport.remote_loop for the full
 // rationale (timing-based EOF detection, adaptive idle cadence, two-step burst
 // drain). It descends from the Python version's loop; the Go port additionally
-// emits a one-shot @@i static device/network block before the loop and appends
-// SoC temp / Wi-Fi signal / link-quality / tx-retry to each @@s line, for the
-// diagnostics panel.
+// emits a one-shot @@i static device/network block (the active interface and its
+// link details) before the loop and appends SoC temp, interface byte counters,
+// Wi-Fi signal/link, and three ICMP ping RTTs (laptop / gateway / internet) to
+// each @@s line, for the diagnostics panel.
 //
 // Footprint is kept minimal — it shares the device with playback:
-//   - the resource stats (@@s: load/mem/temp/Wi-Fi) are gathered and emitted
-//     ONLY while the diagnostics overlay is open. The TUI flips that with the
+//   - the resource stats (@@s: load/mem/temp/throughput/latency) are gathered and
+//     emitted ONLY while the diagnostics overlay is open. The TUI flips that with the
 //     MID-90 control message (1 = on, 0 = off) on the same stdin channel as the
 //     playback commands; the device defaults the flag off and resets it on every
 //     connection, so the TUI re-asserts while the overlay is open. Off the
@@ -179,21 +180,42 @@ func SpawnEnv() []string {
 //     rather than printf (an applet on some BusyBox builds). Every stat comes
 //     from /proc and /sys via shell builtins (no awk/sed/grep), and the meminfo
 //     and /proc/net/wireless scans break as soon as their fields are found, so
-//     the timing-based EOF detection stays cheap and undisturbed.
-//   - the once-per-connection @@i probes parse iw/ip-route output and
-//     fwVersion.conf with shell parameter expansion rather than sed|head
-//     pipelines, sparing ~a dozen fork+execs at connect/reconnect.
-const remoteLoopA = `fw=$(LUCI_local -r 5 2>/dev/null); fw=${fw#*Data:}; fw=${fw%% *}; fv=$(LUCI_local -r 6 2>/dev/null); fv=${fv#*Data:}; fv=${fv%% *}; nc=0; while read -r l; do case "$l" in processor*) nc=$((nc+1));; esac; done < /proc/cpuinfo; read -r kt < /proc/sys/kernel/ostype; read -r kr < /proc/sys/kernel/osrelease; mac=; read -r mac < /sys/class/net/wlan0/address 2>/dev/null; ip=$(ip -o -4 addr show wlan0 2>/dev/null); ip=${ip#*inet }; ip=${ip%%/*}; nl=$(printf '\nx'); nl=${nl%x}; gw=; ir=$(ip route 2>/dev/null); case "$ir" in *"default via "*) gw=${ir#*default via }; gw=${gw%%"$nl"*}; gw=${gw%% *};; esac; wl=$(iw dev wlan0 link 2>/dev/null); ss=; case "$wl" in *"SSID: "*) ss=${wl#*SSID: }; ss=${ss%%"$nl"*};; esac; fq=; case "$wl" in *"freq: "*) fq=${wl#*freq: }; fq=${fq%%"$nl"*}; fq=${fq%% *};; esac; rt=; case "$wl" in *"tx bitrate: "*) rt=${wl#*tx bitrate: }; rt=${rt%%"$nl"*}; rt=${rt%% *};; esac; bd=; ap=; pf=; while IFS= read -r ln; do case "$ln" in *build_date*\"*) bd=${ln#*\"}; bd=${bd%%\"*};; *app_svn_version*\"*) ap=${ln#*\"}; ap=${ap%%\"*};; *platform*\"*) pf=${ln#*\"}; pf=${pf%%\"*};; esac; done < /etc/fwVersion.conf 2>/dev/null; set -- $(df -k /lsync 2>/dev/null | tail -1); echo @@i; printf 'ip=%s\n' "$ip"; printf 'mac=%s\n' "$mac"; printf 'gw=%s\n' "$gw"; printf 'ssid=%s\n' "$ss"; printf 'freq=%s\n' "$fq"; printf 'rate=%s\n' "$rt"; printf 'build=%s\n' "$bd"; printf 'app=%s\n' "$ap"; printf 'platform=%s\n' "$pf"; printf 'data=%s %s\n' "$3" "$2"; echo @@E; i=0; prev=; ef=0; idl=0; bw=0; dg=0; pc49=0; while :; do if [ $i -le 0 ]; then b=$(LUCI_local -r 42 2>/dev/null); if [ -n "$b" ] && [ "$b" != "$prev" ]; then prev=$b; echo @@B; printf '%s\n' "$b"; fi; i=5; fi; echo @@p; pn=; rd=0; pc49=$((pc49-1)); if [ $idl -lt 5 ] && [ $pc49 -le 0 ]; then pv=$(LUCI_local -r 49 2>/dev/null); echo "$pv"; pn=${pv#*Data:}; pn=${pn%% *}; rd=1; pc49=3; fi; echo @@t; tv=$(LUCI_local -r 51 2>/dev/null); echo "$tv"; echo @@v; LUCI_local -r 64 2>/dev/null; if [ "$dg" = 1 ]; then read -r la lb lc r1 r2 < /proc/loadavg; mt=0; ma=0; while read -r k v u; do case "$k" in MemTotal:) mt=$v;; MemAvailable:) ma=$v; break;; esac; done < /proc/meminfo; read -r up r3 < /proc/uptime; tp=; read -r tp < /sys/class/thermal/thermal_zone0/temp 2>/dev/null; sl=; lq=; ry=; while read -r wf qa ql lv nf d1 d2 d3 rty rest; do case "$wf" in wlan0:) lq=${ql%.}; sl=${lv%.}; ry=${rty%.}; break;; esac; done < /proc/net/wireless 2>/dev/null; echo @@s; echo "$up $la $lb $lc $ma $mt $nc $fw.$fv $kt-$kr ${tp:--} ${sl:--} ${lq:--} ${ry:--}"; fi; echo @@E; i=$((i-1)); if [ $rd -eq 1 ]; then case "$pn" in ''|*[!0-9]*) lpn=;; *) [ -n "$lpn" ] && [ "$pn" -lt "$lpn" ] && { i=0; pc49=0; }; lpn=$pn;; esac; fi; [ "$tv" != "$ltv" ] && { i=0; pc49=0; }; ltv=$tv; [ $bw -gt 0 ] && { bw=$((bw-1)); i=0; }; case "$tv" in *"Data:0 "*) idl=0;; *) idl=$((idl+1));; esac; w=1; [ $idl -ge 5 ] && w=3; read -r u0 ux < /proc/uptime; if read -r -t $w mid data; then ef=0; pc=0; while :; do case "$mid" in `
+//     the timing-based EOF detection stays cheap and undisturbed. The exception
+//     is latency: while the overlay is open each @@s forks three `ping`s (the
+//     only per-tick execs beyond LUCI_local), each capped at -W1 and parsed by
+//     parameter expansion in the pg() helper.
+//   - the once-per-connection @@i probes select the active interface from the
+//     default route and parse iw / ip-route / sysfs and fwVersion.conf with shell
+//     parameter expansion rather than sed|head pipelines, sparing ~a dozen
+//     fork+execs at connect/reconnect.
+const remoteLoopA = `fw=$(LUCI_local -r 5 2>/dev/null); fw=${fw#*Data:}; fw=${fw%% *}; fv=$(LUCI_local -r 6 2>/dev/null); fv=${fv#*Data:}; fv=${fv%% *}; nc=0; while read -r l; do case "$l" in processor*) nc=$((nc+1));; esac; done < /proc/cpuinfo; read -r kt < /proc/sys/kernel/ostype; read -r kr < /proc/sys/kernel/osrelease; nl=$(printf '\nx'); nl=${nl%x}; cip=${SSH_CLIENT%% *}; pg() { o=$(ping -c1 -W1 "$1" 2>/dev/null); case "$o" in *"min/avg/max = "*) o=${o#*min/avg/max = }; o=${o%% ms*}; o=${o#*/}; o=${o%%/*};; *) o=-;; esac; echo "$o"; }; gw=; dv=; ir=$(ip route 2>/dev/null); case "$ir" in *"default via "*) r=${ir#*default via }; r=${r%%"$nl"*}; gw=${r%% *}; case "$r" in *" dev "*) dv=${r#* dev }; dv=${dv%% *};; esac;; esac; [ -z "$dv" ] && dv=eth0; mac=; read -r mac < /sys/class/net/$dv/address 2>/dev/null; ip=$(ip -o -4 addr show $dv 2>/dev/null); ip=${ip#*inet }; ip=${ip%%/*}; net=eth; sp=; dx=; ss=; fq=; rt=; if [ -d /sys/class/net/$dv/wireless ]; then net=wifi; wl=$(iw dev $dv link 2>/dev/null); case "$wl" in *"SSID: "*) ss=${wl#*SSID: }; ss=${ss%%"$nl"*};; esac; case "$wl" in *"freq: "*) fq=${wl#*freq: }; fq=${fq%%"$nl"*}; fq=${fq%% *};; esac; case "$wl" in *"tx bitrate: "*) rt=${wl#*tx bitrate: }; rt=${rt%%"$nl"*}; rt=${rt%% *};; esac; else read -r sp < /sys/class/net/$dv/speed 2>/dev/null; read -r dx < /sys/class/net/$dv/duplex 2>/dev/null; fi; bd=; ap=; pf=; while IFS= read -r ln; do case "$ln" in *build_date*\"*) bd=${ln#*\"}; bd=${bd%%\"*};; *app_svn_version*\"*) ap=${ln#*\"}; ap=${ap%%\"*};; *platform*\"*) pf=${ln#*\"}; pf=${pf%%\"*};; esac; done < /etc/fwVersion.conf 2>/dev/null; set -- $(df -k /lsync 2>/dev/null | tail -1); echo @@i; printf 'net=%s\n' "$net"; printf 'iface=%s\n' "$dv"; printf 'ip=%s\n' "$ip"; printf 'mac=%s\n' "$mac"; printf 'gw=%s\n' "$gw"; printf 'speed=%s\n' "$sp"; printf 'duplex=%s\n' "$dx"; printf 'ssid=%s\n' "$ss"; printf 'freq=%s\n' "$fq"; printf 'rate=%s\n' "$rt"; printf 'build=%s\n' "$bd"; printf 'app=%s\n' "$ap"; printf 'platform=%s\n' "$pf"; printf 'data=%s %s\n' "$3" "$2"; echo @@E; i=0; prev=; ef=0; idl=0; bw=0; dg=0; pc49=0; while :; do if [ $i -le 0 ]; then b=$(LUCI_local -r 42 2>/dev/null); if [ -n "$b" ] && [ "$b" != "$prev" ]; then prev=$b; echo @@B; printf '%s\n' "$b"; fi; i=5; fi; echo @@p; pn=; rd=0; pc49=$((pc49-1)); if [ $idl -lt 5 ] && [ $pc49 -le 0 ]; then pv=$(LUCI_local -r 49 2>/dev/null); echo "$pv"; pn=${pv#*Data:}; pn=${pn%% *}; rd=1; pc49=3; fi; echo @@t; tv=$(LUCI_local -r 51 2>/dev/null); echo "$tv"; echo @@v; LUCI_local -r 64 2>/dev/null; if [ "$dg" = 1 ]; then read -r la lb lc r1 r2 < /proc/loadavg; mt=0; ma=0; while read -r k v u; do case "$k" in MemTotal:) mt=$v;; MemAvailable:) ma=$v; break;; esac; done < /proc/meminfo; read -r up r3 < /proc/uptime; tp=; read -r tp < /sys/class/thermal/thermal_zone0/temp 2>/dev/null; rxb=; read -r rxb < /sys/class/net/$dv/statistics/rx_bytes 2>/dev/null; txb=; read -r txb < /sys/class/net/$dv/statistics/tx_bytes 2>/dev/null; sg=-; lq=-; if [ "$net" = wifi ]; then while read -r wf qa ql lv rest; do case "$wf" in "$dv:") lq=${ql%.}; sg=${lv%.}; break;; esac; done < /proc/net/wireless 2>/dev/null; fi; pcl=$(pg "$cip"); pgw=$(pg "$gw"); pnt=$(pg "$ph"); echo @@s; echo "$up $la $lb $lc $ma $mt $nc $fw.$fv $kt-$kr ${tp:--} ${rxb:--} ${txb:--} $sg $lq $pcl $pgw $pnt"; fi; echo @@E; i=$((i-1)); if [ $rd -eq 1 ]; then case "$pn" in ''|*[!0-9]*) lpn=;; *) [ -n "$lpn" ] && [ "$pn" -lt "$lpn" ] && { i=0; pc49=0; }; lpn=$pn;; esac; fi; [ "$tv" != "$ltv" ] && { i=0; pc49=0; }; ltv=$tv; [ $bw -gt 0 ] && { bw=$((bw-1)); i=0; }; case "$tv" in *"Data:0 "*) idl=0;; *) idl=$((idl+1));; esac; w=1; [ $idl -ge 5 ] && w=3; read -r u0 ux < /proc/uptime; if read -r -t $w mid data; then ef=0; pc=0; while :; do case "$mid" in `
 
 const remoteLoopB = `) LUCI_local "$mid" "$data" >/dev/null 2>&1; pc=1;; 90) case "$data" in 1) dg=1;; *) dg=0;; esac;; esac; read -r -t 0 || break; read -r -t 1 mid data || break; done; [ $pc = 1 ] && { i=0; bw=4; idl=0; pc49=0; }; else read -r u1 ux < /proc/uptime; el=$(( (${u1%%.*} - ${u0%%.*}) * 100 + 1${u1#*.} - 1${u0#*.} )); if [ $el -lt 50 ]; then ef=$((ef+1)); [ $ef -ge 3 ] && exit 0; else ef=0; fi; fi; done`
 
 // RemoteLoop returns the on-device loop script with the given command-id
-// whitelist (default "40|64").
-func RemoteLoop(mids string) string {
+// whitelist (default "40|64") and the diagnostics internet-ping target.
+func RemoteLoop(mids, pingHost string) string {
 	if mids == "" {
 		mids = "40|64"
 	}
-	return remoteLoopA + mids + remoteLoopB
+	// ph is single-quoted; sanitizeHost guarantees no quote/metachar can escape it.
+	return "ph='" + sanitizeHost(pingHost) + "'; " + remoteLoopA + mids + remoteLoopB
+}
+
+// sanitizeHost keeps only hostname/IP-safe characters so a user-supplied
+// ping_host can be embedded in the device loop without shell escaping; an empty
+// or fully-stripped value falls back to the default target.
+func sanitizeHost(h string) string {
+	var b strings.Builder
+	for _, r := range h {
+		if r == '.' || r == '-' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "spotify.com"
+	}
+	return b.String()
 }
 
 // ClassifyStderr maps residual ssh/askpass stderr to a fatal TransportError, or

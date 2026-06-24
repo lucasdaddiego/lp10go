@@ -39,15 +39,15 @@ func TestStateDirHonorsEnv(t *testing.T) {
 func TestConfigDefaultsWhenNoFile(t *testing.T) {
 	writeConfig(t, "")
 	cfg := Load()
-	if cfg.Host != "192.168.1.13" || cfg.User != "root" || cfg.VolStep != 2 {
+	if cfg.Host != "lp10.local" || cfg.User != "root" || cfg.VolStep != 2 || cfg.PingHost != "spotify.com" || !cfg.Discover {
 		t.Errorf("defaults wrong: %+v", cfg)
 	}
 }
 
 func TestConfigFileAndEnvOverride(t *testing.T) {
-	writeConfig(t, "host = \"lp10.local\"\nvol_step = 5\n")
+	writeConfig(t, "host = \"lp10.local\"\nvol_step = 5\nping_host = \"1.1.1.1\"\ndiscover = false\n")
 	cfg := Load()
-	if cfg.Host != "lp10.local" || cfg.VolStep != 5 {
+	if cfg.Host != "lp10.local" || cfg.VolStep != 5 || cfg.PingHost != "1.1.1.1" || cfg.Discover {
 		t.Errorf("file override wrong: %+v", cfg)
 	}
 	t.Setenv("LP10_HOST", "10.0.0.9")
@@ -73,7 +73,7 @@ func TestMissingConfigIsSilent(t *testing.T) {
 func TestMalformedConfigWarnsAndKeepsDefaults(t *testing.T) {
 	writeConfig(t, "host = [broken\n")
 	cfg := Load()
-	if cfg.Host != "192.168.1.13" {
+	if cfg.Host != "lp10.local" {
 		t.Errorf("host = %q, want default", cfg.Host)
 	}
 	if cfg.Warn == "" || !contains(cfg.Warn, "config.toml") {
@@ -89,7 +89,7 @@ func TestNonUTF8ConfigWarnsNotCrashes(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte{0xff, 0xfe, 0x00, 'b', 'r', 'o', 'k', 'e', 'n'}, 0o644)
 	cfg := Load()
-	if cfg.Host != "192.168.1.13" || cfg.Warn == "" {
+	if cfg.Host != "lp10.local" || cfg.Warn == "" {
 		t.Errorf("non-utf8 config should warn and keep defaults: %+v", cfg)
 	}
 }

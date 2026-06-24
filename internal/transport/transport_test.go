@@ -87,7 +87,7 @@ func TestKeychainHintKeepsPasswordOutOfHistory(t *testing.T) {
 }
 
 func TestRemoteLoopIsValidShellAndWhitelistsMids(t *testing.T) {
-	body := RemoteLoop("")
+	body := RemoteLoop("", "spotify.com")
 	if r := exec.Command("sh", "-n", "-c", body).Run(); r != nil {
 		t.Fatalf("remote loop is not valid shell: %v", r)
 	}
@@ -108,8 +108,34 @@ func TestRemoteLoopIsValidShellAndWhitelistsMids(t *testing.T) {
 }
 
 func TestRemoteLoopCustomMidsAreInterpolated(t *testing.T) {
-	if !strings.Contains(RemoteLoop("40"), `case "$mid" in 40)`) {
+	if !strings.Contains(RemoteLoop("40", ""), `case "$mid" in 40)`) {
 		t.Error("custom mids should be interpolated")
+	}
+}
+
+func TestRemoteLoopInjectsSanitizedPingHost(t *testing.T) {
+	if !strings.Contains(RemoteLoop("", "open.spotify.com"), `ph='open.spotify.com';`) {
+		t.Error("ping host should be injected as ph")
+	}
+	// metacharacters must not escape the single-quoted assignment
+	if got := RemoteLoop("", "evil';reboot;'"); !strings.Contains(got, `ph='evilreboot';`) {
+		t.Errorf("ping host not sanitized: missing clean ph in %q", got[:40])
+	}
+	// an empty / fully-stripped host falls back to the default target
+	if !strings.Contains(RemoteLoop("", ""), `ph='spotify.com';`) {
+		t.Error("empty ping host should fall back to spotify.com")
+	}
+}
+
+func TestSanitizeHost(t *testing.T) {
+	cases := map[string]string{
+		"spotify.com": "spotify.com", "1.1.1.1": "1.1.1.1",
+		"a b;c": "abc", "": "spotify.com", "$(reboot)": "reboot", ";|&": "spotify.com",
+	}
+	for in, want := range cases {
+		if got := sanitizeHost(in); got != want {
+			t.Errorf("sanitizeHost(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -118,28 +144,51 @@ func TestRemoteLoopCustomMidsAreInterpolated(t *testing.T) {
 // fwVersion samples, so a future edit that breaks the shell parameter-expansion
 // parsing fails here rather than silently on the device (which CI can't run).
 func TestRemoteLoopParsesDeviceOutput(t *testing.T) {
-	body := RemoteLoop("")
+	body := RemoteLoop("", "spotify.com")
+	// extractCase returns the marker's case block, balancing nested case/esac (the
+	// gateway block nests a "dev" case) so the snippet is self-contained shell.
 	extractCase := func(marker string) string {
 		i := strings.Index(body, marker)
 		if i < 0 {
 			t.Fatalf("parse snippet %q not found in remote loop", marker)
 		}
-		j := strings.Index(body[i:], "esac")
-		if j < 0 {
-			t.Fatalf("no esac after %q", marker)
+		rest := body[i:]
+		depth := 0
+		for k := 0; k < len(rest); {
+			switch {
+			case strings.HasPrefix(rest[k:], "case "):
+				depth++
+				k += len("case ")
+			case strings.HasPrefix(rest[k:], "esac"):
+				depth--
+				if depth == 0 {
+					return rest[:k+len("esac")]
+				}
+				k += len("esac")
+			default:
+				k++
+			}
 		}
-		return body[i : i+j+len("esac")]
+		t.Fatalf("unbalanced case for %q", marker)
+		return ""
 	}
 	const nlDef = "nl=$(printf '\\nx'); nl=${nl%x}; " // newline sentinel, as the loop builds it
+	const route = "ir='default via 192.168.1.1 dev eth0\n192.168.1.0/24 dev eth0'; "
 	cases := []struct{ name, setup, marker, result, want string }{
-		{"gateway", "ir='default via 192.168.1.1 dev wlan0\n192.168.1.0/24 dev wlan0'; gw=",
+		{"gateway", route + "gw=; dv=",
 			`case "$ir" in *"default via "*`, "gw", "192.168.1.1"},
+		{"route interface", route + "gw=; dv=",
+			`case "$ir" in *"default via "*`, "dv", "eth0"},
 		{"ssid with spaces", "wl='Connected\n\tSSID: MyWiFi 5G\n\tfreq: 5180'; ss=",
 			`case "$wl" in *"SSID: "*`, "ss", "MyWiFi 5G"},
 		{"freq", "wl='\tSSID: x\n\tfreq: 5180\n\tsignal: -43 dBm'; fq=",
 			`case "$wl" in *"freq: "*`, "fq", "5180"},
 		{"rate", "wl='\tfreq: 5180\n\ttx bitrate: 780.0 MBit/s\n\tbss flags'; rt=",
 			`case "$wl" in *"tx bitrate: "*`, "rt", "780.0"},
+		{"ping avg", "o='round-trip min/avg/max = 31.460/31.461/31.462 ms'",
+			`case "$o" in *"min/avg/max = "*`, "o", "31.461"},
+		{"ping failure", "o='1 packets transmitted, 0 received, 100% loss'",
+			`case "$o" in *"min/avg/max = "*`, "o", "-"},
 		{"fwVersion line", `ln='build_date = "2025-12-24"'; bd=; ap=; pf=`,
 			`case "$ln" in *build_date`, "bd", "2025-12-24"},
 	}
@@ -161,9 +210,9 @@ func TestRemoteLoopParsesDeviceOutput(t *testing.T) {
 // diag-gated stat block, the MID-90 toggle, the playback-only side-effects, and
 // the early-break stat scans.
 func TestRemoteLoopStructuralContract(t *testing.T) {
-	body := RemoteLoop("")
+	body := RemoteLoop("", "spotify.com")
 	for _, want := range []string{
-		`echo "$up $la $lb $lc $ma $mt $nc $fw.$fv $kt-$kr ${tp:--} ${sl:--} ${lq:--} ${ry:--}"`,
+		`echo "$up $la $lb $lc $ma $mt $nc $fw.$fv $kt-$kr ${tp:--} ${rxb:--} ${txb:--} $sg $lq $pcl $pgw $pnt"`,
 		`if [ "$dg" = 1 ]; then`,
 		`90) case "$data" in 1) dg=1;; *) dg=0;; esac;;`,
 		`[ $pc = 1 ] && { i=0; bw=4; idl=0; pc49=0; }`,

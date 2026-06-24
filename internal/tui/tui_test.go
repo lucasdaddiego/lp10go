@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -468,15 +469,15 @@ func TestStatsSignalFollowsDiagOverlay(t *testing.T) {
 
 func TestDiagShowsExpandedFields(t *testing.T) {
 	st := protocol.NewState()
-	applyFixtureRecords(st, "device_record.txt")  // @@i: net + storage
-	applyFixtureRecords(st, "playing_record.txt") // @@s: temp/signal/linkq/retry/noise
+	applyFixtureRecords(st, "device_record.txt")  // @@i: eth link + storage
+	applyFixtureRecords(st, "playing_record.txt") // @@s: temp / byte counters / pings
 	m, _, _ := modelWith(st)
 	m.rows, m.cols = 44, 100
 	m.diag = true
 	out := m.View()
 	for _, want := range []string{
-		"diagnostics", "wi-fi", "HomeWiFi", "signal", "link 64/70",
-		"retries", "since connect", "storage", "any key returns",
+		"diagnostics", "link", "ethernet", "100 Mbit/s", "full duplex",
+		"address", "latency", "you", "±", "storage", "any key returns",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("diag overlay missing %q", want)
@@ -600,5 +601,105 @@ func TestMarqueeFitsAndScrolls(t *testing.T) {
 	m.scroll = cycle
 	if m.marquee(long, 20) != head {
 		t.Error("should loop back to the head after one full cycle")
+	}
+}
+
+// ---- latency sparklines -----------------------------------------------------
+
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+func TestSparkline(t *testing.T) {
+	if got := sparkline(nil, 10); got != "" {
+		t.Errorf("empty series = %q, want \"\"", got)
+	}
+	if got := sparkline([]float64{5, 5, 5}, 10); got != "▁▁▁" {
+		t.Errorf("flat series = %q, want all-low", got)
+	}
+	// a rising ramp spans the full glyph range, low → high
+	got := []rune(sparkline([]float64{0, 1, 2, 3}, 10))
+	if got[0] != '▁' || got[len(got)-1] != '█' {
+		t.Errorf("ramp = %q, want ▁…█", string(got))
+	}
+	// a lone spike towers over a flat baseline
+	spike := []rune(sparkline([]float64{6, 6, 6, 48, 6}, 10))
+	if spike[3] != '█' || spike[0] != '▁' {
+		t.Errorf("spike = %q, want a single tall bar", string(spike))
+	}
+	// maxW keeps only the most recent samples
+	if got := sparkline([]float64{0, 0, 0, 9}, 2); len([]rune(got)) != 2 {
+		t.Errorf("width-capped len = %d, want 2", len([]rune(got)))
+	}
+}
+
+func TestLatencyRowRendersNumbersAndSparkline(t *testing.T) {
+	m, _, _ := modelWith(protocol.NewState())
+	m.sty = newTheme() // normally lazily set on first View()
+	ps := protocol.PingStat{Avg: 6.6, Jitter: 1.1, Peak: 48,
+		Series: []float64{6, 6, 7, 48, 6, 6}, OK: true}
+	row := stripANSI(m.latencyRow("gw", ps, 20))
+	for _, want := range []string{"gw", "6.6 ms", "±1.1", "max 48", "█", "▁"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("latency row missing %q in %q", want, row)
+		}
+	}
+	// eyeball cross-row alignment: differing avg widths must keep columns lined up
+	you := protocol.PingStat{Avg: 11, Jitter: 6.6, Peak: 31, Series: []float64{8, 9, 31, 10, 8}, OK: true}
+	net := protocol.PingStat{Avg: 25, Jitter: 2, Peak: 29, Series: []float64{24, 25, 26, 29, 25}, OK: true}
+	t.Logf("\n%s\n%s\n%s",
+		stripANSI(m.latencyRow("you", you, 20)),
+		row,
+		stripANSI(m.latencyRow("spotify", net, 20)))
+}
+
+func TestDiagLatencyBlockFullRender(t *testing.T) {
+	st := protocol.NewState()
+	applyFixtureRecords(st, "device_record.txt") // @@i: eth link
+	// feed several @@s with a gateway spike (48) amid a ~6ms baseline
+	base := "@@s\n5185 0.2 0.2 0.2 138000 221064 2 AR241CE_9243.16 Linux-5.15.137 50400 "
+	type s struct{ rx, tx, you, gw, net string }
+	for _, smp := range []s{
+		{"1000", "500", "8", "6", "24"}, {"2000", "700", "9", "6", "25"},
+		{"3000", "900", "31", "7", "26"}, {"4000", "1100", "10", "48", "29"},
+		{"5000", "1300", "8", "6", "25"}, {"6000", "1500", "8", "6", "25"},
+	} {
+		feed := base + smp.rx + " " + smp.tx + " - - " + smp.you + " " + smp.gw + " " + smp.net + "\n@@E\n"
+		for rec := range protocol.IterRecords(feeder(strings.Split(strings.TrimSuffix(feed, "\n"), "\n"))) {
+			protocol.ApplyRecord(st, rec)
+		}
+	}
+	m, _, _ := modelWith(st)
+	m.rows, m.cols = 44, 100
+	m.diag = true
+	full := stripANSI(m.View())
+	// the gateway row's peak must have caught the 48ms spike, with a sparkline
+	if !strings.Contains(full, "max 48") {
+		t.Error("gateway peak-hold should show the 48ms spike (max 48)")
+	}
+	if !strings.Contains(full, "█") {
+		t.Error("a sparkline should render in the latency block")
+	}
+	// log the network→audio slice for eyeballing
+	lines := strings.Split(full, "\n")
+	for _, ln := range lines {
+		if strings.Contains(ln, "link") || strings.Contains(ln, "address") ||
+			strings.Contains(ln, "traffic") || strings.Contains(ln, "latency") ||
+			strings.Contains(ln, "you") || strings.Contains(ln, "gw ") || strings.Contains(ln, "spotify") {
+			t.Logf("|%s|", strings.TrimRight(ln, " "))
+		}
+	}
+}
+
+func TestDiagTagsDiscoveredHost(t *testing.T) {
+	st := protocol.NewState()
+	applyFixtureRecords(st, "device_record.txt")
+	cfg := defaultCfg()
+	cfg.Discovered = true
+	m := newModel(st, cfg, make(chan *protocol.Command, 8), nil)
+	m.rows, m.cols = 44, 100
+	m.diag = true
+	if !strings.Contains(stripANSI(m.View()), "mDNS") {
+		t.Error("a discovered host should be tagged · mDNS on the diag host line")
 	}
 }

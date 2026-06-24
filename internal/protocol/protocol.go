@@ -113,23 +113,39 @@ type SysInfo struct {
 	Up, Load, Avail, Total, NCPU, FW string
 	OS                               string // "" when absent
 	TempmC                           string // SoC temperature, milli-°C
-	SignalDBm                        string // Wi-Fi signal level, dBm
-	LinkQ                            string // Wi-Fi link quality
-	TxRetry                          string // Wi-Fi tx-retry counter (cumulative, since boot)
-
-	// TxRetryDelta is tx retries accumulated since this connection began, derived
-	// from the cumulative TxRetry against a per-connection baseline in State.
-	TxRetryDelta   int
-	TxRetryDeltaOK bool
+	RxBytes, TxBytes                 string // active-iface byte counters (cumulative)
+	SignalDBm, LinkQ                 string // Wi-Fi only ("" on ethernet)
+	PingClient, PingGw, PingNet      string // avg RTT ms: laptop / gateway / internet ("" unmeasured)
 }
 
 // DevInfo holds the static device/network info from the one-shot @@i section
 // (key=value lines), refreshed once per connection.
 type DevInfo struct {
+	Net, Iface           string // "eth"|"wifi" medium, and the active interface name
 	IP, MAC, Gateway     string
-	SSID, Freq, Rate     string
+	Speed, Duplex        string // ethernet link: Mbit/s, "full"|"half"
+	SSID, Freq, Rate     string // Wi-Fi link: network name, MHz, tx Mbit/s
 	Build, App, Platform string
 	DataUsed, DataTotal  string // /lsync (data partition), KB
+}
+
+// PingStat is one latency target's rolling readout in milliseconds: the average,
+// the jitter (mean absolute successive difference), the peak over the window, and
+// the raw samples (oldest→newest) for a sparkline. OK is false until a sample
+// arrives. Series/Peak cover only the window held while the overlay was open.
+type PingStat struct {
+	Avg, Jitter, Peak float64
+	Series            []float64
+	OK                bool
+}
+
+// NetStat is the computed network readout for the diagnostics overlay: live
+// throughput (bytes/sec) over the active interface and latency to the laptop,
+// the gateway, and the configured internet host.
+type NetStat struct {
+	RxRate, TxRate float64
+	RatesOK        bool
+	Ping           [3]PingStat // 0 laptop (client), 1 gateway, 2 internet
 }
 
 // IterRecords turns a line source into a sequence of framed records. The 'B'
@@ -364,7 +380,8 @@ func ApplyRecord(st *State, rec Record) {
 				Load:  f[1] + " " + f[2] + " " + f[3],
 				Avail: f[4], Total: f[5], NCPU: f[6], FW: f[7],
 			}
-			// optional trailing extras: OS, then temp / signal / link-quality.
+			// optional trailing extras (newer loops, diag-gated): OS, SoC temp,
+			// rx/tx byte counters, Wi-Fi signal/link, then the three ping RTTs.
 			// "-" is the loop's placeholder for a value it couldn't read.
 			opt := func(i int) string {
 				if i < len(f) && f[i] != "-" {
@@ -373,8 +390,10 @@ func ApplyRecord(st *State, rec Record) {
 				return ""
 			}
 			si.OS = opt(8)
-			si.TempmC, si.SignalDBm, si.LinkQ = opt(9), opt(10), opt(11)
-			si.TxRetry = opt(12)
+			si.TempmC = opt(9)
+			si.RxBytes, si.TxBytes = opt(10), opt(11)
+			si.SignalDBm, si.LinkQ = opt(12), opt(13)
+			si.PingClient, si.PingGw, si.PingNet = opt(14), opt(15), opt(16)
 			sysinfo = si
 		}
 	}
@@ -388,12 +407,20 @@ func ApplyRecord(st *State, rec Record) {
 				continue
 			}
 			switch k {
+			case "net":
+				di.Net = v
+			case "iface":
+				di.Iface = v
 			case "ip":
 				di.IP = v
 			case "mac":
 				di.MAC = v
 			case "gw":
 				di.Gateway = v
+			case "speed":
+				di.Speed = v
+			case "duplex":
+				di.Duplex = v
 			case "ssid":
 				di.SSID = v
 			case "freq":
@@ -419,15 +446,7 @@ func ApplyRecord(st *State, rec Record) {
 	defer st.mu.Unlock()
 	st.lastRx = now
 	if sysinfo != nil {
-		// Derive retries-since-connect from the cumulative counter: baseline at
-		// the first @@s of a connection (reset by StartProc), and re-baseline if
-		// the counter drops (the device rebooted, resetting its since-boot count).
-		if n, ok := Int(sysinfo.TxRetry); ok {
-			if !st.txRetryHas || n < st.txRetryBase {
-				st.txRetryBase, st.txRetryHas = n, true
-			}
-			sysinfo.TxRetryDelta, sysinfo.TxRetryDeltaOK = n-st.txRetryBase, true
-		}
+		st.updateNet(sysinfo, now)
 		st.sysinfo = sysinfo
 	}
 	if devinfo != nil {
@@ -593,8 +612,14 @@ type State struct {
 	attempts  int
 	retryBase int // attempts at last successful connect
 
-	txRetryBase int  // Wi-Fi tx-retry counter at this connection's first @@s
-	txRetryHas  bool // whether a tx-retry baseline has been captured yet
+	// network throughput + latency for the diagnostics overlay, over the active
+	// interface. Rates derive from the cumulative byte counters against the prior
+	// @@s; the ping rings hold recent RTTs (ms) for laptop/gateway/internet.
+	netPrevRx, netPrevTx int64
+	netPrevAt            time.Time
+	netRxRate, netTxRate float64
+	netRatesOK           bool
+	pingRing             [3][]float64
 
 	// EQ / tone control state from the :2018 tunnel (separate from the ssh
 	// player stream). Keyed by wire code (MXV/EQS/BAS/MID/TRE/VBS/VBI).
@@ -799,7 +824,9 @@ func (st *State) StartProc(p *Proc) {
 	st.gotRecord = false
 	st.lastRx = time.Time{}
 	st.lastData = time.Time{}
-	st.txRetryHas = false // re-baseline retries against the new connection
+	st.netPrevAt = time.Time{} // re-baseline throughput; latency rings start fresh
+	st.netRatesOK = false
+	st.pingRing = [3][]float64{}
 	st.attempts++
 }
 
@@ -873,6 +900,76 @@ func (st *State) DevInfoView() *DevInfo {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.devinfo
+}
+
+// pingRingMax bounds each latency ring; at ~1 sample/sec while the overlay is
+// open it is a ~30s window for the rolling average, jitter, peak, and sparkline.
+const pingRingMax = 30
+
+// updateNet folds one @@s sample into the throughput rates and latency rings.
+// Caller holds st.mu. Rates need a prior sample with elapsed time and monotonic
+// counters (an interface flap or reboot zeroes them — skip rather than spike).
+func (st *State) updateNet(si *SysInfo, now time.Time) {
+	rx, rxErr := strconv.ParseInt(si.RxBytes, 10, 64)
+	tx, txErr := strconv.ParseInt(si.TxBytes, 10, 64)
+	if rxErr == nil && txErr == nil {
+		if !st.netPrevAt.IsZero() {
+			if dt := now.Sub(st.netPrevAt).Seconds(); dt > 0 && rx >= st.netPrevRx && tx >= st.netPrevTx {
+				st.netRxRate = float64(rx-st.netPrevRx) / dt
+				st.netTxRate = float64(tx-st.netPrevTx) / dt
+				st.netRatesOK = true
+			}
+		}
+		st.netPrevRx, st.netPrevTx, st.netPrevAt = rx, tx, now
+	}
+	for i, s := range [3]string{si.PingClient, si.PingGw, si.PingNet} {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			st.pingRing[i] = append(st.pingRing[i], v)
+			if len(st.pingRing[i]) > pingRingMax {
+				st.pingRing[i] = st.pingRing[i][len(st.pingRing[i])-pingRingMax:]
+			}
+		}
+	}
+}
+
+// NetView returns the computed throughput + latency readout for the overlay.
+func (st *State) NetView() NetStat {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	ns := NetStat{RxRate: st.netRxRate, TxRate: st.netTxRate, RatesOK: st.netRatesOK}
+	for i := range st.pingRing {
+		ns.Ping[i] = pingStat(st.pingRing[i])
+	}
+	return ns
+}
+
+// pingStat reduces a latency ring to an average and a jitter (the mean absolute
+// difference between successive samples — RFC 3550-style packet delay variation).
+func pingStat(r []float64) PingStat {
+	if len(r) == 0 {
+		return PingStat{}
+	}
+	ps := PingStat{OK: true, Peak: r[0], Series: append([]float64(nil), r...)}
+	var sum float64
+	for _, v := range r {
+		sum += v
+		if v > ps.Peak {
+			ps.Peak = v
+		}
+	}
+	ps.Avg = sum / float64(len(r))
+	if len(r) > 1 {
+		var ds float64
+		for i := 1; i < len(r); i++ {
+			d := r[i] - r[i-1]
+			if d < 0 {
+				d = -d
+			}
+			ds += d
+		}
+		ps.Jitter = ds / float64(len(r)-1)
+	}
+	return ps
 }
 
 // Preload seeds the cached track/pos/vol for an instant first paint. The clock

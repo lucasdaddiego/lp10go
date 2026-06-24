@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -527,78 +526,83 @@ func TestSysinfoSectionParsesButIsNotLuciData(t *testing.T) {
 
 func TestDevInfoAndSysinfoExtras(t *testing.T) {
 	st := NewState()
-	feed := "@@i\nip=192.168.1.40\nmac=aa:bb:cc:dd:ee:ff\nssid=HomeWiFi\nfreq=2437\nbuild=2025-12-24\napp=312\nplatform=LS8\ndata=11424 232924\n@@E\n" +
-		"@@s\n100 0.5 0.4 0.3 137000 215000 2 AR241CE_9243.16 Linux-5.15.137 43200 -42 68\n@@E\n"
+	feed := "@@i\nnet=eth\niface=eth0\nip=192.168.1.13\nmac=aa:bb:cc:dd:ee:ff\nspeed=100\nduplex=full\nbuild=2025-12-24\napp=312\nplatform=LS8\ndata=11424 232924\n@@E\n" +
+		"@@s\n100 0.5 0.4 0.3 137000 215000 2 AR241CE_9243.16 Linux-5.15.137 43200 1000 500 - - 2.1 14.3 31.4\n@@E\n"
 	for _, rec := range recordsFrom(splitLines(feed)) {
 		ApplyRecord(st, rec)
 	}
 	di := st.DevInfoView()
-	if di == nil || di.IP != "192.168.1.40" || di.SSID != "HomeWiFi" || di.Platform != "LS8" || di.DataUsed != "11424" || di.DataTotal != "232924" {
+	if di == nil || di.Net != "eth" || di.Iface != "eth0" || di.IP != "192.168.1.13" || di.Speed != "100" || di.Duplex != "full" || di.Platform != "LS8" || di.DataUsed != "11424" || di.DataTotal != "232924" {
 		t.Errorf("devinfo = %+v", di)
 	}
 	si := st.sysinfo
-	if si == nil || si.TempmC != "43200" || si.SignalDBm != "-42" || si.LinkQ != "68" {
+	if si == nil || si.TempmC != "43200" || si.RxBytes != "1000" || si.TxBytes != "500" || si.PingClient != "2.1" || si.PingGw != "14.3" || si.PingNet != "31.4" {
 		t.Errorf("sysinfo extras = %+v", si)
+	}
+	if si.SignalDBm != "" || si.LinkQ != "" { // '-' placeholders: no Wi-Fi stats on ethernet
+		t.Errorf("ethernet should carry empty wifi stats: %+v", si)
 	}
 	if si.FW != "AR241CE_9243.16" || si.OS != "Linux-5.15.137" {
 		t.Errorf("base sysinfo regressed: %+v", si)
 	}
 }
 
+func TestDevInfoWifiPath(t *testing.T) {
+	st := NewState()
+	feed := "@@i\nnet=wifi\niface=wlan0\nip=192.168.1.20\nmac=aa:bb:cc:dd:ee:f1\ngw=192.168.1.1\nssid=MyWiFi 5G\nfreq=5180\nrate=780\ndata=1 2\n@@E\n" +
+		"@@s\n100 0 0 0 1 2 2 fw kt-kr 40000 100 200 -55 63 2.0 5.0 40.0\n@@E\n"
+	for _, rec := range recordsFrom(splitLines(feed)) {
+		ApplyRecord(st, rec)
+	}
+	di := st.DevInfoView()
+	if di == nil || di.Net != "wifi" || di.Iface != "wlan0" || di.SSID != "MyWiFi 5G" || di.Freq != "5180" || di.Rate != "780" {
+		t.Errorf("wifi devinfo = %+v", di)
+	}
+	if si := st.sysinfo; si == nil || si.SignalDBm != "-55" || si.LinkQ != "63" {
+		t.Errorf("wifi sysinfo = %+v", si)
+	}
+}
+
+func TestNetThroughputAndLatency(t *testing.T) {
+	st := NewState()
+	t0 := time.Now()
+	st.updateNet(&SysInfo{RxBytes: "1000", TxBytes: "500", PingGw: "14"}, t0)
+	n := st.NetView()
+	if n.RatesOK {
+		t.Error("rates must wait for a second sample")
+	}
+	if g := n.Ping[1]; !g.OK || g.Avg != 14 || g.Jitter != 0 {
+		t.Errorf("gateway ping after one sample = %+v", g)
+	}
+	// +8000 rx, +2000 tx over 2s -> 4000 / 1000 B/s
+	st.updateNet(&SysInfo{RxBytes: "9000", TxBytes: "2500", PingGw: "20"}, t0.Add(2*time.Second))
+	n = st.NetView()
+	if !n.RatesOK || n.RxRate != 4000 || n.TxRate != 1000 {
+		t.Errorf("rates = %v / %v, want 4000 / 1000", n.RxRate, n.TxRate)
+	}
+	if g := n.Ping[1]; g.Avg != 17 || g.Jitter != 6 { // mean(14,20)=17, |20-14|=6
+		t.Errorf("gateway ping = %+v, want avg 17 jitter 6", g)
+	}
+	if g := n.Ping[1]; g.Peak != 20 || len(g.Series) != 2 || g.Series[1] != 20 {
+		t.Errorf("gateway peak/series = %v / %v, want peak 20, series [14 20]", g.Peak, g.Series)
+	}
+	// a counter reset (reboot / interface flap) must not spike the rate
+	st.updateNet(&SysInfo{RxBytes: "10", TxBytes: "5"}, t0.Add(4*time.Second))
+	if n := st.NetView(); n.RxRate != 4000 {
+		t.Errorf("counter reset should skip the rate, got %v", n.RxRate)
+	}
+	// a reconnect clears the latency rings and the throughput baseline
+	st.StartProc(&Proc{})
+	if n := st.NetView(); n.RatesOK || n.Ping[1].OK {
+		t.Errorf("reconnect should reset net stats, got %+v", n)
+	}
+}
+
 func TestSysinfoExtrasPlaceholderIsEmpty(t *testing.T) {
 	st := NewState()
-	ApplyRecord(st, recordsFrom(splitLines("@@s\n1 0 0 0 1 2 2 fw kt-kr - - -\n@@E\n"))[0])
-	if si := st.sysinfo; si == nil || si.TempmC != "" || si.SignalDBm != "" || si.LinkQ != "" {
-		t.Errorf("'-' placeholders should parse as empty, got %+v", si)
-	}
-}
-
-func TestSysinfoTrailingRetry(t *testing.T) {
-	st := NewState()
-	// 13 fields: …os temp signal linkq retry
-	ApplyRecord(st, recordsFrom(splitLines(
-		"@@s\n100 0.5 0.4 0.3 137000 215000 2 AR241CE_9243.16 Linux-5.15.137 43200 -42 68 1423\n@@E\n"))[0])
-	if si := st.sysinfo; si == nil || si.TxRetry != "1423" {
-		t.Errorf("retry = %+v", si)
-	}
-	// older 12-field loops leave the retry extra empty (opt() is bounds-checked)
-	st2 := NewState()
-	ApplyRecord(st2, recordsFrom(splitLines(
-		"@@s\n100 0.5 0.4 0.3 137000 215000 2 fw kt-kr 43200 -42 68\n@@E\n"))[0])
-	if si := st2.sysinfo; si == nil || si.TxRetry != "" {
-		t.Errorf("missing trailing retry should be empty, got %+v", si)
-	}
-}
-
-func TestTxRetrySinceConnectDelta(t *testing.T) {
-	at := func(st *State, retry int) {
-		ApplyRecord(st, recordsFrom(splitLines(fmt.Sprintf(
-			"@@s\n100 0 0 0 1 2 2 fw kt-kr - - - %d\n@@E\n", retry)))[0])
-	}
-	st := NewState()
-	at(st, 1000) // first @@s of the connection -> baseline, delta 0
-	if si := st.sysinfo; !si.TxRetryDeltaOK || si.TxRetryDelta != 0 {
-		t.Fatalf("first @@s should baseline (delta 0), got %+v", si)
-	}
-	at(st, 1042) // +42 since connect
-	if si := st.sysinfo; si.TxRetryDelta != 42 {
-		t.Errorf("delta = %d, want 42", si.TxRetryDelta)
-	}
-	// a new connection re-baselines (StartProc resets), so the same raw counter
-	// reads as 0 again
-	st.StartProc(&Proc{})
-	at(st, 1042)
-	if si := st.sysinfo; si.TxRetryDelta != 0 {
-		t.Errorf("after reconnect delta = %d, want 0 (re-baselined)", si.TxRetryDelta)
-	}
-	// a counter drop (device reboot) re-baselines mid-connection
-	at(st, 5)
-	if si := st.sysinfo; si.TxRetryDelta != 0 {
-		t.Errorf("after counter reset delta = %d, want 0", si.TxRetryDelta)
-	}
-	at(st, 12)
-	if si := st.sysinfo; si.TxRetryDelta != 7 {
-		t.Errorf("post-reboot delta = %d, want 7", si.TxRetryDelta)
+	ApplyRecord(st, recordsFrom(splitLines("@@s\n1 0 0 0 1 2 2 fw kt-kr -\n@@E\n"))[0])
+	if si := st.sysinfo; si == nil || si.TempmC != "" {
+		t.Errorf("'-' placeholder should parse as empty, got %+v", si)
 	}
 }
 
@@ -608,7 +612,7 @@ func TestDeviceRecordFixtureParses(t *testing.T) {
 		ApplyRecord(st, rec)
 	}
 	di := st.DevInfoView()
-	if di == nil || di.IP != "192.168.1.40" || di.SSID != "HomeWiFi" ||
+	if di == nil || di.Net != "eth" || di.Iface != "eth0" || di.IP != "192.168.1.13" || di.Speed != "100" || di.Duplex != "full" ||
 		di.DataUsed != "1258291" || di.DataTotal != "7340032" {
 		t.Errorf("devinfo = %+v", di)
 	}

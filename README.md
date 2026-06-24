@@ -47,9 +47,15 @@ app, no browser, no background daemon: run `lp10`, get one screen.
 - **Graphic equalizer** — the EQ switch and treble / mid / bass tone, a deep-bass
   switch and level, and the output cap (Max Volume) — driven over the device's
   own control channel. Paints instantly from a cached snapshot on launch.
-- **Diagnostics overlay** (`?`) — device and firmware, Wi-Fi (signal · link
-  quality · tx retries), audio, and live resource gauges (cpu · memory · temp ·
-  storage), gathered on the device **only while the overlay is open**.
+- **Diagnostics overlay** (`?`) — device and firmware, the active network link
+  (Wi-Fi or ethernet, with live throughput and round-trip latency — jitter, peak,
+  and a rolling sparkline — to your laptop, the gateway, and the internet), audio,
+  and resource gauges (cpu · memory · temp · storage), gathered on the device
+  **only while the overlay is open**.
+- **Finds the device itself** — mDNS auto-discovery at startup locates the LP10 on
+  the LAN by its `am=LP10` advertisement, so a changed DHCP lease never needs a
+  config edit. Pure mDNS (no dependency, no bound port); falls back to the
+  configured host.
 - **Adapts to the terminal** — the full dashboard, a compact frame, or a
   one-line mini view, by size.
 - **Light on both ends** — one ssh connection, a single static binary, and an
@@ -133,10 +139,12 @@ Press `?` for a full read-out of the device, connection, and link health:
 ┃  player    ssh stream · rx 0.0s ago · 1 attempt                          ┃
 ┃  control   tunnel :2018 · live                                           ┃
 ┃  ────────────────────────────── network ───────────────────────────────  ┃
-┃  wi-fi     HomeWiFi · ch 36 · 5 GHz                                      ┃
-┃  signal    ███████████░░░░░░░  -55 dBm   780 Mbit/s  · link 63/70        ┃
-┃  retries   5 tx · since connect                                          ┃
+┃  link      ethernet · 100 Mbit/s · full duplex                           ┃
 ┃  address   192.168.1.13 · gw 192.168.1.1                                 ┃
+┃  traffic   rx 1.2 MB/s · tx 45 KB/s                                      ┃
+┃  latency   you       11 ms ±6.6  max 31   ▁▂▁█▃▁▂▁▁▂▁█▃▁▂▁▁▂             ┃
+┃            gw       6.6 ms ±1.1  max 12   ▁▁▂▁▁▁▂▁▁▁▁▁▂▁▁▁▁▂             ┃
+┃            spotify   25 ms ±2.0  max 29   ▂▃▂▂▃▂▂▃▂▂▂▃▂▂▃▂▂▃             ┃
 ┃  ─────────────────────────────── audio ────────────────────────────────  ┃
 ┃  format    audio/ogg · 44.1 kHz                                          ┃
 ┃  volume    ████████░░░░░░░░░░  44%                                       ┃
@@ -151,9 +159,14 @@ Press `?` for a full read-out of the device, connection, and link health:
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ```
 
-The resource gauges (and the Wi-Fi/signal stats) are collected on the device
-**only while this overlay is open** — close it and the on-device loop drops back
-to the bare minimum. Any key returns to the dashboard.
+The resource gauges and the network stats (throughput, Wi-Fi signal, and the three
+ping round-trips) are collected on the device **only while this overlay is open** —
+close it and the on-device loop drops back to the bare minimum. Each latency row
+keeps a rolling ~30s sparkline and a peak, so an intermittent spike (a powerline
+link dropping out, say) is visible after the fact — that window spans only the
+current viewing, since nothing is gathered with the overlay closed. The internet-ping
+target is the `ping_host` config key (default `spotify.com`). Any key returns to the
+dashboard.
 
 ## How it works
 
@@ -201,13 +214,28 @@ password auth.
 `~/.config/lp10/config.toml` — defaults shown:
 
 ```toml
-host     = "192.168.1.13"   # IP or mDNS name (e.g. lp10.local)
-user     = "root"
-name     = "LP10 · Living"  # the label shown in the header
-vol_step = 2                # volume change per keypress (1–100)
+host      = "lp10.local"    # fallback IP / mDNS name when discovery is off or finds nothing
+user      = "root"
+name      = "LP10 · Living" # header label; its tail also disambiguates discovery (see below)
+vol_step  = 2               # volume change per keypress (1–100)
+ping_host = "spotify.com"   # diagnostics: the device's internet-latency target
+discover  = true            # find the LP10 on the LAN via mDNS at startup
 ```
 
-`LP10_HOST` overrides `host` for a single run. Persistent state (the pre-mute
+### Discovery
+
+With `discover = true` (the default), lp10 sends one multicast-DNS query at
+startup and connects to whichever LP10 answers — so a changed DHCP lease never
+needs a config edit. It identifies the device by the `am=LP10` fingerprint the
+AirPlay daemon advertises (`_raop._tcp`), reads its current IP, and uses it. If
+you have more than one LP10, the device whose advertised name appears in `name`
+wins (e.g. `name = "LP10 · Living"` picks the one called *Living*); otherwise the
+sole/first one is used. It is pure mDNS — no bound port, no dependency, ~tens of
+milliseconds when the device is present, and it falls back to `host` if nothing
+answers, so startup never blocks on a missing device. Set `discover = false` to
+pin `host` (an IP, or a `.local` name your OS resolves).
+
+`LP10_HOST` overrides `host` for a single run and skips discovery. Persistent state (the pre-mute
 level and the now-playing/EQ snapshot used for instant first paint) lives under
 `~/.local/state/lp10/`.
 

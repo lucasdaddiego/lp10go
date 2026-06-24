@@ -9,19 +9,27 @@
 // it dies — ssh exits, the session closes, and the loop EOF-exits within ~1 s.
 // Host keys are deliberately not verified (LAN device, ramfs host keys).
 //
-// Config: ~/.config/lp10/config.toml (optional) — host, user, name, vol_step.
-// LP10_HOST overrides host for one run. State: ~/.local/state/lp10/.
+// Config: ~/.config/lp10/config.toml (optional) — host, user, name, vol_step,
+// ping_host, discover. Unless discover=false or LP10_HOST is set, a startup mDNS
+// query finds the LP10 on the LAN (am=LP10) and uses its current address, with
+// host as the fallback. State: ~/.local/state/lp10/.
 // First-run: security add-generic-password -U -a root -s lp10 -w
 package main
 
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/lucasdaddiego/lp10go/internal/config"
+	"github.com/lucasdaddiego/lp10go/internal/discovery"
 	"github.com/lucasdaddiego/lp10go/internal/transport"
 	"github.com/lucasdaddiego/lp10go/internal/tui"
 )
+
+// discoverTimeout bounds the startup mDNS probe; a present device answers in
+// well under this (early-exit), so it only bites when nothing is found.
+const discoverTimeout = 2 * time.Second
 
 const usage = "lp10: takes no arguments — run `lp10` for the live TUI"
 
@@ -38,10 +46,21 @@ func main() {
 		os.Exit(2)
 	}
 
+	cfg := config.Load()
+	// Best-effort mDNS discovery so a changed DHCP lease never needs a config
+	// edit: find the LP10 on the LAN and use its current address. Pinning the
+	// host (LP10_HOST) or `discover = false` skips it; the configured host is the
+	// fallback when nothing answers, so startup never blocks on a missing device.
+	if cfg.Discover && os.Getenv(config.HostEnv) == "" {
+		if dev, ok := discovery.FindLP10(cfg.Name, discoverTimeout); ok {
+			cfg.Host, cfg.Discovered = dev.Addr(), true
+		}
+	}
+
 	// tui.Run handles SIGTERM/SIGHUP and Ctrl-C cooperatively and returns the
 	// exit code (0 clean, 130 interrupt, 143 signal) after running teardown and
 	// restoring the terminal.
-	code, err := tui.Run(config.Load())
+	code, err := tui.Run(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lp10: %v\n", err)
 		os.Exit(1)

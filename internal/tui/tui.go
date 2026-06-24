@@ -959,6 +959,7 @@ func (m *model) renderDiag(s protocol.Snapshot, now time.Time, W int) string {
 	t := m.sty
 	lastRx, dData, att, derr, si := m.st.DiagView()
 	dev := m.st.DevInfoView()
+	netv := m.st.NetView()
 	eqConn, eqv := m.st.EQView()
 
 	gw := min(20, W-52) // gauge width, leaving room for label/value/detail
@@ -1025,6 +1026,9 @@ func (m *model) renderDiag(s protocol.Snapshot, now time.Time, W int) string {
 			mac = dev.MAC
 		}
 	}
+	if m.cfg.Discovered {
+		host += " · mDNS"
+	}
 	add(m.gridRow("host", host, "uptime", up, W))
 	add(m.gridRow("device", model, "os", os, W))
 	add(m.gridRow("firmware", fw, "build", build, W))
@@ -1048,37 +1052,61 @@ func (m *model) renderDiag(s protocol.Snapshot, now time.Time, W int) string {
 	}
 	add(m.diagLine("control", t.sTxt.Render("tunnel :2018 · ")+tunPen.Render(tunTxt)))
 
-	if dev != nil && (dev.SSID != "" || dev.IP != "") {
+	if dev != nil && (dev.IP != "" || dev.Net != "") {
 		add(m.dividerRow("network", W))
-		band := ""
-		if f, err := strconv.Atoi(dev.Freq); err == nil && f > 0 {
-			b := " · 2.4 GHz"
-			if f >= 5000 {
-				b = " · 5 GHz"
-			}
-			band = fmt.Sprintf(" · ch %d%s", freqToChan(f), b)
-		}
-		add(m.diagLine("wi-fi", t.sBri.Render(orDash(dev.SSID))+t.sDim.Render(band)))
-		if si != nil {
-			if dbm, err := strconv.Atoi(si.SignalDBm); err == nil {
-				pen := lo(float64(-dbm), 60, 72) // -dBm: 41 good, 72 warn
-				valTxt := fmt.Sprintf("%d dBm", dbm)
-				detail := ""
-				if dev.Rate != "" {
-					detail = "   " + dev.Rate + " Mbit/s"
+		if dev.Net == "wifi" {
+			band := ""
+			if f, err := strconv.Atoi(dev.Freq); err == nil && f > 0 {
+				b := " · 2.4 GHz"
+				if f >= 5000 {
+					b = " · 5 GHz"
 				}
-				if lq, e := strconv.Atoi(si.LinkQ); e == nil && lq > 0 {
-					detail += fmt.Sprintf("  · link %d/70", lq)
+				band = fmt.Sprintf(" · ch %d%s", freqToChan(f), b)
+			}
+			add(m.diagLine("link", t.sBri.Render("wi-fi")+t.sDim.Render(" · ")+t.sTxt.Render(orDash(dev.SSID))+t.sDim.Render(band)))
+			if si != nil {
+				if dbm, err := strconv.Atoi(si.SignalDBm); err == nil {
+					pen := lo(float64(-dbm), 60, 72) // -dBm: 41 good, 72 warn
+					valTxt := fmt.Sprintf("%d dBm", dbm)
+					detail := ""
+					if dev.Rate != "" {
+						detail = "   " + dev.Rate + " Mbit/s"
+					}
+					if lq, e := strconv.Atoi(si.LinkQ); e == nil && lq > 0 {
+						detail += fmt.Sprintf("  · link %d/70", lq)
+					}
+					detail = Clip(detail, W-10-gw-2-DispW(valTxt)) // never wrap the row
+					add(m.diagGauge("signal", t.gaugeBar(float64(dbm+90)/60, gw, pen), pen.Render(valTxt), detail))
 				}
-				detail = Clip(detail, W-10-gw-2-DispW(valTxt)) // never wrap the row
-				add(m.diagGauge("signal", t.gaugeBar(float64(dbm+90)/60, gw, pen),
-					pen.Render(valTxt), detail))
 			}
-			if si.TxRetryDeltaOK {
-				add(m.diagLine("retries", t.sTxt.Render(strconv.Itoa(si.TxRetryDelta))+t.sDmr.Render(" tx · since connect")))
+		} else {
+			detail := ""
+			if sp, err := strconv.Atoi(dev.Speed); err == nil && sp > 0 {
+				detail += fmt.Sprintf(" · %d Mbit/s", sp)
 			}
+			if dev.Duplex != "" {
+				detail += " · " + dev.Duplex + " duplex"
+			}
+			add(m.diagLine("link", t.sBri.Render("ethernet")+t.sDim.Render(detail)))
 		}
 		add(m.diagLine("address", t.sTxt.Render(orDash(dev.IP))+t.sDim.Render(" · gw "+orDash(dev.Gateway))))
+		if netv.RatesOK {
+			add(m.diagLine("traffic", t.sDim.Render("rx ")+t.sTxt.Render(fmtRate(netv.RxRate))+
+				t.sDim.Render(" · tx ")+t.sTxt.Render(fmtRate(netv.TxRate))))
+		}
+		// one row per latency target: avg · jitter · peak · a sparkline of the
+		// rolling window. The sparkline fills the remaining width (its column
+		// starts after the fixed numeric fields), bounded by the ring size.
+		sparkW := min(pingHistory, W-latencyFixedCols)
+		names := [3]string{"you", "gw", pingLabel(m.cfg.PingHost)}
+		latLabel := "latency"
+		for i, ps := range netv.Ping {
+			if !ps.OK {
+				continue
+			}
+			add(m.diagLine(latLabel, m.latencyRow(names[i], ps, sparkW)))
+			latLabel = ""
+		}
 	}
 
 	add(m.dividerRow("audio", W))
@@ -1245,6 +1273,114 @@ func freqToChan(mhz int) int {
 		return (mhz - 5000) / 5
 	}
 	return 0
+}
+
+// fmtRate renders a bytes/sec throughput in the largest unit that keeps it ≥1.
+func fmtRate(bps float64) string {
+	switch {
+	case bps >= 1<<20:
+		return fmt.Sprintf("%.1f MB/s", bps/(1<<20))
+	case bps >= 1<<10:
+		return fmt.Sprintf("%.0f KB/s", bps/(1<<10))
+	default:
+		return fmt.Sprintf("%.0f B/s", bps)
+	}
+}
+
+// fmtMs renders a millisecond figure with one decimal under 10ms (sub-ms LAN
+// hops would otherwise round to a meaningless "0"), whole numbers above.
+func fmtMs(ms float64) string {
+	if ms < 10 {
+		return fmt.Sprintf("%.1f", ms)
+	}
+	return fmt.Sprintf("%.0f", ms)
+}
+
+const (
+	// latencyFixedCols is the width the latency row's fixed fields consume (the
+	// 10-col diag label + name + avg + jitter + peak + separators); the sparkline
+	// takes whatever width is left. pingHistory caps it to the device's ring.
+	latencyFixedCols = 41
+	pingHistory      = 30
+)
+
+var sparkRunes = []rune("▁▂▃▄▅▆▇█")
+
+// sparkline renders the values as block glyphs scaled to the window's own
+// min/max — a flat baseline reads low and a transient spike stands tall — using
+// the last maxW samples (so it shows the most recent history when space is tight).
+func sparkline(vals []float64, maxW int) string {
+	if maxW <= 0 || len(vals) == 0 {
+		return ""
+	}
+	if len(vals) > maxW {
+		vals = vals[len(vals)-maxW:]
+	}
+	lo, hi := vals[0], vals[0]
+	for _, v := range vals {
+		if v < lo {
+			lo = v
+		}
+		if v > hi {
+			hi = v
+		}
+	}
+	span := hi - lo
+	var b strings.Builder
+	for _, v := range vals {
+		idx := 0
+		if span > 0 {
+			idx = int((v-lo)/span*float64(len(sparkRunes)-1) + 0.5)
+		}
+		b.WriteRune(sparkRunes[idx])
+	}
+	return b.String()
+}
+
+// latencyRow renders one target — name, average, jitter, peak (amber once a real
+// spike has landed), and the sparkline. The numeric fields are fixed-width so the
+// sparkline column lines up across the three rows.
+func (m *model) latencyRow(name string, ps protocol.PingStat, sparkW int) string {
+	t := m.sty
+	pad := func(s string, w int) string {
+		if d := w - DispW(s); d > 0 {
+			return s + strings.Repeat(" ", d)
+		}
+		return s
+	}
+	rpad := func(s string, w int) string {
+		if d := w - DispW(s); d > 0 {
+			return strings.Repeat(" ", d) + s
+		}
+		return s
+	}
+	peakPen := t.sDmr
+	if ps.Peak > ps.Avg*2 && ps.Peak-ps.Avg > 10 { // a genuine spike, not baseline wobble
+		peakPen = stWarn
+	}
+	return t.sDim.Render(pad(name, 8)) +
+		t.sTxt.Render(rpad(fmtMs(ps.Avg), 4)+" ms") + " " +
+		t.sDmr.Render(pad("±"+fmtMs(ps.Jitter), 5)) + " " +
+		peakPen.Render(pad("max "+fmtMs(ps.Peak), 8)) + " " +
+		t.sTxt.Render(sparkline(ps.Series, sparkW))
+}
+
+// pingLabel shortens the configured internet target for the latency row: an IP
+// is shown whole, a hostname collapses to its second-level domain
+// (apresolve.spotify.com → spotify).
+func pingLabel(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "net"
+	}
+	parts := strings.Split(host, ".")
+	if _, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+		return host // numeric final label → an IPv4 address; show it whole
+	}
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return host
 }
 
 func fmtUptime(up string) string {

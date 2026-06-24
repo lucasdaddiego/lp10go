@@ -89,7 +89,7 @@ func streamOnce(st *protocol.State, cfg config.Config, backoff time.Duration) ti
 		os.Remove(errf.Name())
 	}()
 
-	argv := append(transport.SSHArgv(cfg), transport.RemoteLoop(""))
+	argv := append(transport.SSHArgv(cfg), transport.RemoteLoop("", cfg.PingHost))
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = transport.SpawnEnv()
 	cmd.Stderr = errf
