@@ -221,6 +221,12 @@ func TestRemoteLoopStructuralContract(t *testing.T) {
 		// track-skip detector working across skip ticks
 		`pc49=$((pc49-1)); if [ $idl -lt 5 ] && [ $pc49 -le 0 ]; then`,
 		`if [ $rd -eq 1 ]; then case "$pn" in`,
+		// latency ping poll gated to every 3rd tick (mirrors pc49) so an unreachable
+		// target can't stall every stats tick; skipped ticks emit "-" (no sample)
+		`pgc=$((pgc-1)); if [ $pgc -le 0 ]; then pg "$cip"; pcl=$o;`,
+		// pg returns through the shared $o (no capturing subshell) so each ping
+		// target costs one fork, not two
+		`o=${o%%/*};; *) o=-;; esac; };`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("remote loop missing structural invariant:\n  %s", want)

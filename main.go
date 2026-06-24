@@ -27,9 +27,12 @@ import (
 	"github.com/lucasdaddiego/lp10go/internal/tui"
 )
 
-// discoverTimeout bounds the startup mDNS probe; a present device answers in
-// well under this (early-exit), so it only bites when nothing is found.
-const discoverTimeout = 2 * time.Second
+// discoverTimeout bounds the startup mDNS probe. A present device answers in well
+// under this — the first reply early-exits (~tens of ms), and discovery.FindLP10
+// retransmits within the window to ride out UDP loss — so it only bites as a brief
+// delay before the cached first paint when nothing is on the LAN. Kept short for
+// that reason; the configured host is the fallback.
+const discoverTimeout = 1 * time.Second
 
 const usage = "lp10: takes no arguments — run `lp10` for the live TUI"
 

@@ -902,8 +902,11 @@ func (st *State) DevInfoView() *DevInfo {
 	return st.devinfo
 }
 
-// pingRingMax bounds each latency ring; at ~1 sample/sec while the overlay is
-// open it is a ~30s window for the rolling average, jitter, peak, and sparkline.
+// pingRingMax bounds each latency ring. The device samples latency on every 3rd
+// stats tick while the overlay is open (~one sample per few seconds), so 30 holds
+// roughly a one-to-few-minute window for the rolling average, jitter, peak, and
+// sparkline. Ticks that skip the ping send "-", which updateNet drops, so a sparser
+// cadence just slows the window rather than flattening it.
 const pingRingMax = 30
 
 // updateNet folds one @@s sample into the throughput rates and latency rings.

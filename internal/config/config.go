@@ -34,7 +34,11 @@ func homeDir() string {
 // Defaults mirror config.DEFAULTS. Field order is irrelevant; types drive the
 // strict TOML coercion below.
 const (
-	defHost     = "lp10.local" // fallback host; discovery (on by default) finds the real one
+	// defHost is only a fallback: discovery (on by default) resolves the device's
+	// real address at startup, so it works out of the box even as the DHCP lease
+	// moves. With discover=false (or no mDNS responder) this literal must itself
+	// resolve — a device not reachable as "lp10.local" then needs host set.
+	defHost     = "lp10.local"
 	defUser     = "root"
 	defName     = "LP10 · Living"
 	defVolStep  = 2

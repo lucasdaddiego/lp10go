@@ -4,12 +4,14 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/lucasdaddiego/lp10go/internal/config"
 	"github.com/lucasdaddiego/lp10go/internal/fixtures"
 	"github.com/lucasdaddiego/lp10go/internal/protocol"
+	"github.com/lucasdaddiego/lp10go/internal/workers"
 )
 
 // applyFixtureRecords feeds every framed record of a fixture into st.
@@ -653,6 +655,26 @@ func TestLatencyRowRendersNumbersAndSparkline(t *testing.T) {
 		stripANSI(m.latencyRow("spotify", net, 20)))
 }
 
+// TestLatencyRowSparklineColumnMatchesFixedCols pins latencyFixedCols to the actual
+// row layout: latencyRow renders everything right of the diag label (diagLine
+// prepends that), so its sparkline must begin exactly latencyFixedCols-diagLabelW
+// columns in. If a field width or separator changes without latencyFixedCols, the
+// sparkline clips or the three rows stop lining up — this catches that.
+func TestLatencyRowSparklineColumnMatchesFixedCols(t *testing.T) {
+	m, _, _ := modelWith(protocol.NewState())
+	m.sty = newTheme() // normally lazily set on first View()
+	ps := protocol.PingStat{Avg: 6.6, Jitter: 1.1, Peak: 48, Series: []float64{1, 8}, OK: true}
+	row := stripANSI(m.latencyRow("you", ps, 8))
+	start := strings.IndexAny(row, string(sparkRunes))
+	if start < 0 {
+		t.Fatalf("no sparkline rune in %q", row)
+	}
+	if got, want := DispW(row[:start]), latencyFixedCols-diagLabelW; got != want {
+		t.Errorf("sparkline starts at column %d, want %d (latencyFixedCols %d - diagLabelW %d)",
+			got, want, latencyFixedCols, diagLabelW)
+	}
+}
+
 func TestDiagLatencyBlockFullRender(t *testing.T) {
 	st := protocol.NewState()
 	applyFixtureRecords(st, "device_record.txt") // @@i: eth link
@@ -702,4 +724,34 @@ func TestDiagTagsDiscoveredHost(t *testing.T) {
 	if !strings.Contains(stripANSI(m.View()), "mDNS") {
 		t.Error("a discovered host should be tagged · mDNS on the diag host line")
 	}
+}
+
+func TestDiagSilentToleratesIdleCadence(t *testing.T) {
+	st := protocol.NewState()
+	applyFixtureRecords(st, "playing_record.txt") // marks connected + stamps last_data
+	m, _, _ := modelWith(st)
+	m.sty = newTheme() // normally set on first View()
+	m.rows, m.cols = 44, 100
+	_, dData, _, _, _ := st.DiagView()
+	snap := st.Snap()
+	if !snap.Connected || dData.IsZero() {
+		t.Fatal("setup: expected connected with a last_data stamp")
+	}
+	// a ~3s idle low-poll gap must still read connected, not flash "LUCI silent"
+	idle := stripANSI(m.renderDiag(snap, dData.Add(3500*time.Millisecond), 96))
+	if strings.Contains(idle, "LUCI silent") || !strings.Contains(idle, "connected") {
+		t.Errorf("3.5s idle-cadence gap should read connected, got header: %q", firstLine(idle))
+	}
+	// a gap beyond the watchdog's own SilentAfter should flag silence
+	stale := stripANSI(m.renderDiag(snap, dData.Add(workers.SilentAfter+time.Second), 96))
+	if !strings.Contains(stale, "LUCI silent") {
+		t.Errorf("gap past SilentAfter should flag LUCI silent, got header: %q", firstLine(stale))
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

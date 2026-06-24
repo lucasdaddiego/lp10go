@@ -987,7 +987,10 @@ func (m *model) renderDiag(s protocol.Snapshot, now time.Time, W int) string {
 	switch {
 	case !s.Connected:
 		hr, hrW = stWarn.Render("● disconnected"), DispW("● disconnected")
-	case !dData.IsZero() && now.Sub(dData).Seconds() > 3:
+	case !dData.IsZero() && now.Sub(dData) > workers.SilentAfter:
+		// Match the watchdog's silence threshold (not a tighter one): the device's
+		// idle loop legitimately drops to a ~3s poll cadence, so a shorter window
+		// would flash "LUCI silent" between healthy low-poll frames.
 		hr, hrW = stWarn.Render("● LUCI silent · "+clock), DispW("● LUCI silent · "+clock)
 	default:
 		hr, hrW = t.sAcc.Render("●")+t.sDim.Render(" connected · "+clock), DispW("● connected · "+clock)
@@ -1211,12 +1214,12 @@ func (m *model) cellKV(k, v string, w int) string {
 
 // diagLine renders "label  value" with a fixed dim label column.
 func (m *model) diagLine(label, value string) string {
-	return m.sty.sDim.Render(label) + strings.Repeat(" ", 10-DispW(label)) + value
+	return m.sty.sDim.Render(label) + strings.Repeat(" ", diagLabelW-DispW(label)) + value
 }
 
 // diagGauge renders "label  [gauge]  value detail".
 func (m *model) diagGauge(label, gauge, value, detail string) string {
-	return m.sty.sDim.Render(label) + strings.Repeat(" ", 10-DispW(label)) +
+	return m.sty.sDim.Render(label) + strings.Repeat(" ", diagLabelW-DispW(label)) +
 		gauge + "  " + value + m.sty.sDmr.Render(detail)
 }
 
@@ -1297,10 +1300,23 @@ func fmtMs(ms float64) string {
 }
 
 const (
-	// latencyFixedCols is the width the latency row's fixed fields consume (the
-	// 10-col diag label + name + avg + jitter + peak + separators); the sparkline
-	// takes whatever width is left. pingHistory caps it to the device's ring.
-	latencyFixedCols = 41
+	// diagLabelW is the dim label column shared by every diagnostics row (see
+	// diagLine / diagGauge): the label, left-padded to this width, then the value.
+	diagLabelW = 10
+
+	// The latency row's fixed fields, in render order (see latencyRow); the
+	// sparkline takes whatever width remains. latencyFixedCols is computed from
+	// these so the columns and the sparkline stay aligned when a field width
+	// changes — TestLatencyRowSparklineColumnMatchesFixedCols pins the start.
+	latNameW   = 8     // target name (left-padded)
+	latAvgW    = 4     // average ms (right-aligned), before its unit
+	latAvgUnit = " ms" // the avg field's trailing unit
+	latJitW    = 5     // ±jitter
+	latPeakW   = 8     // "max <peak>"
+
+	// label + name + avg + unit + jitter + peak, plus the three single-space field
+	// separators (after avg, after jitter, after peak).
+	latencyFixedCols = diagLabelW + latNameW + latAvgW + len(latAvgUnit) + latJitW + latPeakW + 3
 	pingHistory      = 30
 )
 
@@ -1358,10 +1374,10 @@ func (m *model) latencyRow(name string, ps protocol.PingStat, sparkW int) string
 	if ps.Peak > ps.Avg*2 && ps.Peak-ps.Avg > 10 { // a genuine spike, not baseline wobble
 		peakPen = stWarn
 	}
-	return t.sDim.Render(pad(name, 8)) +
-		t.sTxt.Render(rpad(fmtMs(ps.Avg), 4)+" ms") + " " +
-		t.sDmr.Render(pad("±"+fmtMs(ps.Jitter), 5)) + " " +
-		peakPen.Render(pad("max "+fmtMs(ps.Peak), 8)) + " " +
+	return t.sDim.Render(pad(name, latNameW)) +
+		t.sTxt.Render(rpad(fmtMs(ps.Avg), latAvgW)+latAvgUnit) + " " +
+		t.sDmr.Render(pad("±"+fmtMs(ps.Jitter), latJitW)) + " " +
+		peakPen.Render(pad("max "+fmtMs(ps.Peak), latPeakW)) + " " +
 		t.sTxt.Render(sparkline(ps.Series, sparkW))
 }
 

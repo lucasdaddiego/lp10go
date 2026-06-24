@@ -10,6 +10,7 @@
 package discovery
 
 import (
+	"errors"
 	"net"
 	"sort"
 	"strings"
@@ -47,11 +48,19 @@ func (d Device) Addr() string {
 	return strings.TrimSuffix(d.Host, ".")
 }
 
-// FindLP10 sends one mDNS query and watches for replies up to timeout, returning
+// FindLP10 sends mDNS queries and watches for replies up to timeout, returning
 // the LP10 whose friendly name matches nameHint (a substring match against, say,
 // the config "name"), or the sole/first LP10 otherwise. It returns early the
 // moment a fully-resolved candidate (with an IP) arrives, so a present device is
 // usually found in well under 100ms; absence costs the full timeout.
+//
+// The query is retransmitted a couple of times within the window: mDNS is UDP and
+// lossy, so a single dropped query or reply would otherwise silently fall back to
+// the configured host for the whole launch. Retransmits cost nothing when the
+// device is present (the first reply early-exits). The query egresses the OS's
+// default multicast interface, so on a multi-homed host (VPN + Wi-Fi + Ethernet) a
+// device reachable only via a non-default interface can be missed — the configured
+// host is the fallback for that case.
 func FindLP10(nameHint string, timeout time.Duration) (Device, bool) {
 	raddr, err := net.ResolveUDPAddr("udp4", mdnsAddr)
 	if err != nil {
@@ -62,15 +71,28 @@ func FindLP10(nameHint string, timeout time.Duration) (Device, bool) {
 		return Device{}, false
 	}
 	defer conn.Close()
-	if _, err := conn.WriteToUDP(buildQuery(service, typePTR), raddr); err != nil {
+	query := buildQuery(service, typePTR)
+	if _, err := conn.WriteToUDP(query, raddr); err != nil {
 		return Device{}, false
 	}
 
 	col := newCollector()
-	deadline := time.Now().Add(timeout)
-	_ = conn.SetReadDeadline(deadline)
+	start := time.Now()
+	deadline := start.Add(timeout)
+	// Retransmit times as fractions of the window so they always fit inside it
+	// regardless of the caller's timeout; a present device almost always answers
+	// the first query, so these only ever matter under packet loss.
+	resend := []time.Time{start.Add(timeout / 4), start.Add(timeout / 2)}
+
 	buf := make([]byte, 9000)
 	for {
+		// Wake no later than the next scheduled retransmit so we can send it.
+		readDeadline := deadline
+		if len(resend) > 0 && resend[0].Before(readDeadline) {
+			readDeadline = resend[0]
+		}
+		_ = conn.SetReadDeadline(readDeadline)
+
 		n, _, rerr := conn.ReadFromUDP(buf)
 		if n > 0 {
 			if recs, ok := parsePacket(buf[:n]); ok {
@@ -80,8 +102,24 @@ func FindLP10(nameHint string, timeout time.Duration) (Device, bool) {
 				}
 			}
 		}
-		if rerr != nil { // deadline or socket error
-			break
+		if rerr != nil {
+			// Only a read-deadline timeout is recoverable (a due retransmit or the
+			// overall deadline); a genuine socket error ends the probe.
+			var ne net.Error
+			if !errors.As(rerr, &ne) || !ne.Timeout() {
+				break
+			}
+			now := time.Now()
+			if !now.Before(deadline) {
+				break // overall timeout
+			}
+			for len(resend) > 0 && !now.Before(resend[0]) {
+				resend = resend[1:]
+				if _, werr := conn.WriteToUDP(query, raddr); werr != nil {
+					resend = nil // socket won't take writes; keep reading, stop resending
+					break
+				}
+			}
 		}
 	}
 	return pickLP10(col.devices(), nameHint) // timed out: accept a host-only match too
