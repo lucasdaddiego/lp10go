@@ -125,7 +125,7 @@ Press `?` for a full read-out of the device, connection, and link health:
 ┃                                                                          ┃
 ┃  diagnostics                                        ● connected · 16:40  ┃
 ┃                                                                          ┃
-┃  host     root@192.168.1.40         uptime   3h 25m                      ┃
+┃  host     root@192.168.1.13         uptime   3h 25m                      ┃
 ┃  device   Arylic AR241CE · LS8      os       Linux 5.15.137              ┃
 ┃  firmware AR241CE_9243.16           build    2025-12-24 · app 312        ┃
 ┃  mac      aa:bb:cc:dd:ee:ff         cores    2                           ┃
@@ -136,7 +136,7 @@ Press `?` for a full read-out of the device, connection, and link health:
 ┃  wi-fi     HomeWiFi · ch 36 · 5 GHz                                      ┃
 ┃  signal    ███████████░░░░░░░  -55 dBm   780 Mbit/s  · link 63/70        ┃
 ┃  retries   5 tx · since connect                                          ┃
-┃  address   192.168.1.40 · gw 192.168.1.1                                 ┃
+┃  address   192.168.1.13 · gw 192.168.1.1                                 ┃
 ┃  ─────────────────────────────── audio ────────────────────────────────  ┃
 ┃  format    audio/ogg · 44.1 kHz                                          ┃
 ┃  volume    ████████░░░░░░░░░░  44%                                       ┃
@@ -201,7 +201,7 @@ password auth.
 `~/.config/lp10/config.toml` — defaults shown:
 
 ```toml
-host     = "192.168.1.40"   # IP or mDNS name (e.g. lp10.local)
+host     = "192.168.1.13"   # IP or mDNS name (e.g. lp10.local)
 user     = "root"
 name     = "LP10 · Living"  # the label shown in the header
 vol_step = 2                # volume change per keypress (1–100)

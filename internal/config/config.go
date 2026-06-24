@@ -34,7 +34,7 @@ func homeDir() string {
 // Defaults mirror config.DEFAULTS. Field order is irrelevant; types drive the
 // strict TOML coercion below.
 const (
-	defHost    = "192.168.1.40"
+	defHost    = "192.168.1.13"
 	defUser    = "root"
 	defName    = "LP10 · Living"
 	defVolStep = 2

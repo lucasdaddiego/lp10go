@@ -39,7 +39,7 @@ func TestStateDirHonorsEnv(t *testing.T) {
 func TestConfigDefaultsWhenNoFile(t *testing.T) {
 	writeConfig(t, "")
 	cfg := Load()
-	if cfg.Host != "192.168.1.40" || cfg.User != "root" || cfg.VolStep != 2 {
+	if cfg.Host != "192.168.1.13" || cfg.User != "root" || cfg.VolStep != 2 {
 		t.Errorf("defaults wrong: %+v", cfg)
 	}
 }
@@ -73,7 +73,7 @@ func TestMissingConfigIsSilent(t *testing.T) {
 func TestMalformedConfigWarnsAndKeepsDefaults(t *testing.T) {
 	writeConfig(t, "host = [broken\n")
 	cfg := Load()
-	if cfg.Host != "192.168.1.40" {
+	if cfg.Host != "192.168.1.13" {
 		t.Errorf("host = %q, want default", cfg.Host)
 	}
 	if cfg.Warn == "" || !contains(cfg.Warn, "config.toml") {
@@ -89,7 +89,7 @@ func TestNonUTF8ConfigWarnsNotCrashes(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte{0xff, 0xfe, 0x00, 'b', 'r', 'o', 'k', 'e', 'n'}, 0o644)
 	cfg := Load()
-	if cfg.Host != "192.168.1.40" || cfg.Warn == "" {
+	if cfg.Host != "192.168.1.13" || cfg.Warn == "" {
 		t.Errorf("non-utf8 config should warn and keep defaults: %+v", cfg)
 	}
 }
