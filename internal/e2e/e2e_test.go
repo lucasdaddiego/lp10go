@@ -164,14 +164,15 @@ func TestSigtermExits143AndCleansUp(t *testing.T) {
 
 // TestAskpassIntegration drives the real binary down its SSH_ASKPASS hot path
 // (LP10_ASKPASS=1 → transport.AskpassMain → KeychainPassword → realRunSecurity)
-// with a stub `security` on PATH, so every keychain outcome is exercised end to
-// end: a returned password, a missing item, a locked keychain, and security(1)
-// being absent. This covers the askpass/keychain code the fake transport never
-// reaches (the fake ssh never prompts for a password).
+// with a stub secret-store tool on PATH (security on macOS, secret-tool on Linux;
+// the per-OS stub scripts live in askpass_{darwin,linux}_test.go), so every store
+// outcome is exercised end to end: a returned password, a missing item, a locked
+// store, and the lookup tool being absent. This covers the askpass/secret-store
+// code the fake transport never reaches (the fake ssh never prompts for a password).
 func TestAskpassIntegration(t *testing.T) {
 	bin := testutil.BuildMain(t)
 	dir := t.TempDir()
-	stub := filepath.Join(dir, "security")
+	stub := filepath.Join(dir, askpassStubBin)
 	writeStub := func(body string) {
 		if err := os.WriteFile(stub, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 			t.Fatal(err)
@@ -192,15 +193,15 @@ func TestAskpassIntegration(t *testing.T) {
 	if out, _, code := run(dir); code != 0 || strings.TrimSpace(out) != "hunter2" {
 		t.Errorf("success: out=%q code=%d, want hunter2/0", out, code)
 	}
-	writeStub("echo 'security: ... could not be found.' 1>&2\nexit 44\n") // no item
+	writeStub(askpassNoItemStub) // no item
 	if _, errOut, code := run(dir); code != 1 || !strings.Contains(errOut, transport.MarkerNoItem) {
 		t.Errorf("no-item: stderr=%q code=%d, want %q/1", errOut, code, transport.MarkerNoItem)
 	}
-	writeStub("echo 'User interaction is not allowed.' 1>&2\nexit 1\n") // locked
+	writeStub(askpassLockedStub) // locked
 	if _, errOut, code := run(dir); code != 1 || !strings.Contains(errOut, transport.MarkerLocked) {
 		t.Errorf("locked: stderr=%q code=%d, want %q/1", errOut, code, transport.MarkerLocked)
 	}
 	if _, errOut, code := run(t.TempDir()); code != 1 || !strings.Contains(errOut, transport.MarkerBroken) {
-		t.Errorf("broken (no security on PATH): stderr=%q code=%d, want %q/1", errOut, code, transport.MarkerBroken)
+		t.Errorf("broken (no lookup tool on PATH): stderr=%q code=%d, want %q/1", errOut, code, transport.MarkerBroken)
 	}
 }

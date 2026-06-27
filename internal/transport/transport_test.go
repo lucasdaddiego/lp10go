@@ -27,23 +27,9 @@ func TestKeychainPasswordSuccess(t *testing.T) {
 	}
 }
 
-func TestKeychainPasswordNoItem(t *testing.T) {
-	withRunSecurity(t, func() secOutcome {
-		return secOutcome{rc: 44, stderr: "security: ... could not be found."}
-	})
-	_, err := KeychainPassword()
-	if err == nil || !strings.Contains(err.Error(), MarkerNoItem) {
-		t.Fatalf("err = %v, want %s", err, MarkerNoItem)
-	}
-}
-
-func TestKeychainPasswordOtherFailureMeansLocked(t *testing.T) {
-	withRunSecurity(t, func() secOutcome { return secOutcome{rc: 51, stderr: "some other error"} })
-	_, err := KeychainPassword()
-	if err == nil || !strings.Contains(err.Error(), MarkerLocked) {
-		t.Fatalf("err = %v, want %s", err, MarkerLocked)
-	}
-}
+// The OS-specific no-item / locked classification (which depends on each tool's
+// exit code and stderr) is exercised in transport_darwin_test.go and
+// transport_linux_test.go.
 
 func TestKeychainPasswordTimeoutMeansLocked(t *testing.T) {
 	withRunSecurity(t, func() secOutcome { return secOutcome{timeout: true} })
@@ -76,15 +62,6 @@ func TestAskpassFailureRoundtripsToFatalClass(t *testing.T) {
 		if terr == nil || !terr.Fatal {
 			t.Errorf("classify(%q) = %v, want fatal", marker, terr)
 		}
-	}
-}
-
-func TestKeychainHintKeepsPasswordOutOfHistory(t *testing.T) {
-	if strings.Contains(KeychainHint, "<password>") {
-		t.Error("hint must not embed a literal password")
-	}
-	if !strings.HasSuffix(strings.TrimRight(KeychainHint, " "), "-w") {
-		t.Error("hint must end with -w so security(1) prompts")
 	}
 }
 
@@ -347,7 +324,7 @@ func TestClassifyStderr(t *testing.T) {
 		t.Errorf("locked: %v", err)
 	}
 	err = ClassifyStderr("lp10-askpass: no-item\nroot@x: Permission denied.")
-	if err == nil || !err.Fatal || !strings.Contains(err.Error(), "add-generic-password") {
+	if err == nil || !err.Fatal || !strings.Contains(err.Error(), StoreHint) {
 		t.Errorf("no-item: %v", err)
 	}
 	if ClassifyStderr("ssh: connect to host x: Operation timed out") != nil {

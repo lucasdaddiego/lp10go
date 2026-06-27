@@ -184,7 +184,7 @@ func TestAuthfailIsFatalWithRemediation(t *testing.T) {
 		t.Fatal("never went fatal")
 	}
 	e := st.Snap().Error
-	if !strings.Contains(e, "password rejected") || !strings.Contains(e, "add-generic-password") {
+	if !strings.Contains(e, "password rejected") || !strings.Contains(e, transport.StoreHint) {
 		t.Errorf("error = %q", e)
 	}
 }
@@ -196,7 +196,7 @@ func TestKeychainLockedIsDistinct(t *testing.T) {
 		t.Fatal("never went fatal")
 	}
 	e := st.Snap().Error
-	if !strings.Contains(e, "Keychain") || strings.Contains(e, "password rejected") {
+	if !strings.Contains(e, "is locked") || strings.Contains(e, "password rejected") {
 		t.Errorf("error = %q", e)
 	}
 }

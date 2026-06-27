@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"regexp"
 	"strconv"
@@ -93,7 +92,6 @@ type model struct {
 	diag          bool
 	showRemaining bool
 	flash         map[string]time.Time
-	copiedAt      time.Time // brief "copied" footer confirmation deadline
 
 	rows, cols   int
 	cellW, cellH int // terminal cell size in device px (0 if unknown); sizes the Kitty cover
@@ -687,9 +685,6 @@ func (m *model) key(ev keyEvent) string {
 			m.showRemaining = !m.showRemaining
 		case 'e':
 			m.pane = paneEQ
-		case 'y':
-			m.copiedAt = time.Now().Add(FlashDuration)
-			return "copy"
 		case '?':
 			m.diag = true
 		}
@@ -738,16 +733,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.interrupted = true
 			return m, tea.Quit
 		}
-		var cmds []tea.Cmd
 		for _, ev := range translateAll(msg) {
-			switch m.key(ev) {
-			case "quit":
+			if m.key(ev) == "quit" {
 				return m, tea.Quit
-			case "copy":
-				cmds = append(cmds, m.copyNowPlaying())
 			}
 		}
-		return m, tea.Batch(cmds...)
+		return m, nil
 	}
 	return m, nil
 }
@@ -1286,37 +1277,6 @@ func spotifySearch(query string) string {
 	return "https://open.spotify.com/search/" + url.PathEscape(query)
 }
 
-// copyNowPlaying returns a command that copies the current track to the macOS
-// clipboard via pbcopy, off the UI goroutine so a slow exec can't stall input.
-// The footer confirmation is set by the key handler, independent of the result.
-func (m *model) copyNowPlaying() tea.Cmd {
-	text := m.nowPlayingText()
-	return func() tea.Msg {
-		c := exec.Command("pbcopy")
-		c.Stdin = strings.NewReader(text)
-		_ = c.Run() // best effort; the flash already fired
-		return nil
-	}
-}
-
-// nowPlayingText is the "Title — Artist · Album" string put on the clipboard,
-// or the configured device name when nothing is playing.
-func (m *model) nowPlayingText() string {
-	t := m.st.Snap().Track
-	name := t.Str("TrackName")
-	if t == nil || name == "" {
-		return m.cfg.Name
-	}
-	out := name
-	if artist := t.Str("Artist"); artist != "" {
-		out += " — " + artist
-	}
-	if album := t.Str("Album"); album != "" {
-		out += " · " + album
-	}
-	return out
-}
-
 // transportSegments renders prev / play-pause / next as three equal-width (~33%)
 // filled segments spanning width w, each with its label centred. Falls back to
 // the volume-entry prompt while it's active.
@@ -1722,15 +1682,11 @@ func (m *model) eqSummary(W int) string {
 }
 
 func (m *model) footerRow(W int) string {
-	if m.copiedAt.After(time.Now()) {
-		return lipgloss.NewStyle().Width(W).Align(lipgloss.Right).
-			Render(m.sty.sAcc.Render(Clip("copied to clipboard", W)))
-	}
 	var hint string
 	if m.pane == paneEQ {
 		hint = "↑↓ pick · ←→ adjust · enter toggle · tab player · q quit"
 	} else {
-		hint = "space play · ↑↓ vol · m mute · y copy · e/tab EQ · ? diag · q quit"
+		hint = "space play · ↑↓ vol · m mute · e/tab EQ · ? diag · q quit"
 	}
 	return lipgloss.NewStyle().Width(W).Align(lipgloss.Right).
 		Render(m.sty.sDmr.Render(Clip(hint, W)))

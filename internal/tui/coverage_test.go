@@ -511,15 +511,10 @@ func TestCov_UpdateMessages(t *testing.T) {
 	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC}); cmd == nil || !m.interrupted {
 		t.Error("ctrl-c should set interrupted and quit")
 	}
-
-	// a 'y' key batch enqueues the copy command
-	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}); cmd == nil {
-		t.Error("y should enqueue the copy command")
-	}
 }
 
 // ============================================================================
-// controller methods: do RESUME, eqCur, eqToggleFocused no-op, copy, nowPlaying
+// controller methods: do RESUME, eqCur, eqToggleFocused no-op
 // ============================================================================
 
 func TestCov_doResumeAndUnmute(t *testing.T) {
@@ -558,26 +553,6 @@ func TestCov_eqCurAndToggleNoop(t *testing.T) {
 	m.eqToggleFocused()
 	if nv, _ := st.EQValue("TRE"); nv != v {
 		t.Error("eqToggleFocused on a ranged band must be a no-op")
-	}
-}
-
-func TestCov_copyAndNowPlayingNilTrack(t *testing.T) {
-	// nil track -> the configured device name
-	m, _, _ := modelWith(protocol.NewState())
-	if got := m.nowPlayingText(); got != m.cfg.Name {
-		t.Errorf("nowPlayingText(nil) = %q, want %q", got, m.cfg.Name)
-	}
-	// the copy command runs (best-effort pbcopy) and returns nil
-	if cmd := m.copyNowPlaying(); cmd == nil || cmd() != nil {
-		t.Error("copyNowPlaying cmd should run and return nil")
-	}
-
-	// track with no artist/album -> just the title
-	st := protocol.NewState()
-	st.Preload(protocol.Track{"TrackName": "Solo"}, 0, 30)
-	mt, _, _ := modelWith(st)
-	if got := mt.nowPlayingText(); got != "Solo" {
-		t.Errorf("nowPlayingText(title only) = %q, want Solo", got)
 	}
 }
 

@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -82,33 +81,5 @@ func TestMetaLinesHyperlinked(t *testing.T) {
 	}
 	if w := lipgloss.Width(lines[0]); w > 40 {
 		t.Errorf("hyperlinked title width %d exceeds column 40", w)
-	}
-}
-
-func TestCopyKeyAndText(t *testing.T) {
-	m, _, _ := makeModel(t)
-	if v := m.key(kr('y')); v != "copy" {
-		t.Errorf("y -> %q, want copy", v)
-	}
-	if !m.copiedAt.After(time.Now()) {
-		t.Error("y should arm the footer confirmation")
-	}
-	if got := m.nowPlayingText(); got != "De Música Ligera — Soda Stereo · Canción Animal" {
-		t.Errorf("nowPlayingText = %q", got)
-	}
-}
-
-// The footer shows the copy confirmation while copiedAt is in the future, then
-// reverts to the key hints.
-func TestFooterCopyConfirmation(t *testing.T) {
-	m, _, _ := makeModel(t)
-	m.sty = newTheme()
-	m.copiedAt = time.Now().Add(time.Second)
-	if !strings.Contains(stripANSI(m.footerRow(60)), "copied to clipboard") {
-		t.Error("expected copy confirmation in footer")
-	}
-	m.copiedAt = time.Now().Add(-time.Second) // expired
-	if !strings.Contains(stripANSI(m.footerRow(60)), "y copy") {
-		t.Error("expected key hints after the confirmation expires")
 	}
 }

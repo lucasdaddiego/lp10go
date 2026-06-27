@@ -8,7 +8,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/lucasdaddiego/lp10.svg)](https://pkg.go.dev/github.com/lucasdaddiego/lp10)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![go](https://img.shields.io/badge/go-1.24%2B-00ADD8)
-![platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
 ```
 $ lp10
@@ -50,7 +50,7 @@ $ lp10
 ┃  Sub     ● on                                                                ┃
 ┃  Lvl     ─────────●────────────────────────────────────────────────────  15  ┃
 ┃  Max Vol ─────────────────────────────────────────────────────────────● 100  ┃
-┃          space play · ↑↓ vol · m mute · y copy · e/tab EQ · ? diag · q quit  ┃
+┃                   space play · ↑↓ vol · m mute · e/tab EQ · ? diag · q quit  ┃
 ```
 
 `lp10` turns the Arylic LP10 (a LibreWireless / LUCI network streamer) into a
@@ -93,14 +93,21 @@ app, no browser, no background daemon: run `lp10`, get one screen.
 
 ## Install
 
-Requires **macOS**, a recent **Go** toolchain (1.24+), and **OpenSSH** (already
-on macOS). Nothing else at runtime.
+Requires **macOS or Linux**, a recent **Go** toolchain (1.24+), and **OpenSSH**
+(already on macOS; `openssh-client` on Linux). On Linux you also need
+`secret-tool` (`libsecret-tools`) plus a running keyring — see step 1. Nothing
+else at runtime.
 
 ```sh
-# 1. Store the device's root password in the macOS Keychain (once). -w with no
-#    value prompts interactively, so the password never lands in shell history
-#    or `ps` output.
+# 1. Store the device's root password in the OS secret store (once). Both forms
+#    prompt interactively, so the password never lands in shell history or `ps`.
+
+# macOS — the login Keychain (built in):
 security add-generic-password -U -a root -s lp10 -w
+
+# Linux — the Secret Service via libsecret (needs libsecret-tools + a running
+# keyring daemon, e.g. GNOME Keyring / KWallet, in a desktop / D-Bus session):
+secret-tool store --label=lp10 service lp10 account root
 
 # 2. Build a stripped release binary into ~/.bin (make sure it's on your PATH).
 make install
@@ -128,7 +135,6 @@ the arrow keys.
 | `e` | jump focus to the equalizer |
 | `m` | mute (volume 0 ↔ restored level, persisted) |
 | `t` | right-hand time: remaining ↔ total |
-| `y` | copy now-playing (`Title — Artist · Album`) to the clipboard |
 | `?` | diagnostics overlay (see below) |
 | `q` | quit |
 
@@ -229,8 +235,9 @@ BusyBox-ash loop on the device streams framed snapshots:
   `<mid> <data>` lines (transport, volume, and a stats-on/off toggle), never
   `eval`. Failed sends are held and delivered in order on reconnect; stale ones
   are dropped visibly.
-- **Keychain auth** — password-only via `SSH_ASKPASS`: the binary re-execs
-  itself and answers ssh's prompt from the macOS Keychain.
+- **Secret-store auth** — password-only via `SSH_ASKPASS`: the binary re-execs
+  itself and answers ssh's prompt from the OS secret store (the macOS login
+  Keychain, or the Secret Service via `secret-tool` on Linux).
 - **Self-reaping** — the loop detects a dead session by read-timing and exits,
   so both ends are reaped no matter how the TUI died; the client reconnects with
   backoff.
@@ -246,9 +253,10 @@ BusyBox-ash loop on the device streams framed snapshots:
   static analyzer (gosec / CodeQL) will flag it, by design — and it means lp10
   offers **no protection against a man-in-the-middle** on the path to the device.
   Only run it on a network you control.
-- **The password never touches the repo.** It lives solely in the macOS Keychain
-  and is delivered to ssh through `SSH_ASKPASS`; it is not in the source, git
-  history, config files, shell history, or `ps` output.
+- **The password never touches the repo.** It lives solely in the OS secret store
+  (the macOS login Keychain or the Linux Secret Service) and is delivered to ssh
+  through `SSH_ASKPASS`; it is not in the source, git history, config files, shell
+  history, or `ps` output.
 - **The device is trusted as root.** Commands are a fixed whitelist, never
   `eval`, but lp10 logs in as `root@LP10` — treat the device as you would any
   appliance you have root on.
@@ -333,7 +341,7 @@ to it fail in CI rather than silently on the device.
 main.go                 entry: askpass hot path, signals, run + teardown
 internal/config/        config file, paths, premute/snapshot persistence
 internal/protocol/      LUCI wire framing, MB42 parse, command reduction, State
-internal/transport/     Keychain/askpass auth, ssh argv, the on-device loop
+internal/transport/     secret-store/askpass auth, ssh argv, the on-device loop
 internal/discovery/     one-shot mDNS query to find the LP10 on the LAN
 internal/workers/       stream / command / watchdog / EQ-tunnel / album-art goroutines + teardown
 internal/tunnel/        the :2018 plain-text EQ/control protocol

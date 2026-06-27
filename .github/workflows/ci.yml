@@ -10,10 +10,11 @@ permissions:
 
 jobs:
   test:
-    # lp10 ships for macOS, so macos-latest is the canonical target. Linux is
-    # cheap and fast and nothing here is darwin-only (no GOOS build tags,
-    # security(1) is stubbed in the askpass test, the device shell loop is
-    # POSIX-clean, and ptys / TIOCGWINSZ exist on Linux too), so we test both.
+    # lp10 ships for macOS and Linux. The OS password-store integration is the
+    # one platform-specific piece (security(1) on darwin, secret-tool on Linux —
+    # see internal/transport/secret_*.go) and is stubbed in the askpass tests, so
+    # both jobs run the full suite. Everything else is portable: pure-Go mDNS, the
+    # POSIX device shell loop, ptys / TIOCGWINSZ. We test both.
     strategy:
       fail-fast: false
       matrix:

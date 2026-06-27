@@ -21,9 +21,11 @@ const (
 	MarkerNoItem = "lp10-askpass: no-item"
 	MarkerLocked = "lp10-askpass: keychain-locked"
 	MarkerBroken = "lp10-askpass: security-failed"
-	// KeychainHint: -w with no value makes security(1) prompt interactively,
-	// so the password never lands in shell history or `ps` output.
-	KeychainHint = "security add-generic-password -U -a root -s lp10 -w"
+	// The askpass markers are an internal wire protocol between the re-exec'd
+	// askpass child and the parent (matched by ClassifyStderr); their literal
+	// text is opaque, so it stays put across OSes. The per-OS store integration
+	// (lookup argv, the not-found rule, StoreHint, and the backend nouns) lives
+	// in secret_darwin.go / secret_linux.go.
 )
 
 // TransportError carries a fatal flag and a retry cadence, mirroring the Python
@@ -36,23 +38,24 @@ type TransportError struct {
 
 func (e *TransportError) Error() string { return e.Msg }
 
-// secOutcome is the result of invoking security(1): a non-zero rc, a timeout, or
-// an inability to run it at all (the OSError class).
+// secOutcome is the result of invoking the OS secret-store lookup: a non-zero rc,
+// a timeout, or an inability to run the tool at all (the OSError class).
 type secOutcome struct {
 	stdout, stderr string
 	rc             int
 	timeout        bool
-	runErr         error // could not execute security(1)
+	runErr         error // could not execute the lookup tool
 }
 
-// runSecurity invokes security(1); overridable in tests.
+// runSecurity invokes the OS secret-store lookup (secretLookupArgv); overridable
+// in tests.
 var runSecurity = realRunSecurity
 
 func realRunSecurity() secOutcome {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "security", "find-generic-password",
-		"-a", "root", "-s", "lp10", "-w")
+	argv := secretLookupArgv()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -68,14 +71,16 @@ func realRunSecurity() secOutcome {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			o.rc = exitErr.ExitCode()
-		} else { // security(1) missing/not executable
+		} else { // the lookup tool is missing/not executable
 			o.runErr = err
 		}
 	}
 	return o
 }
 
-// KeychainPassword reads the LP10 password from the macOS login Keychain.
+// KeychainPassword reads the LP10 password from the OS secret store — the macOS
+// login Keychain via security(1), or the Secret Service via secret-tool on Linux
+// (see secret_darwin.go / secret_linux.go).
 func KeychainPassword() (string, error) {
 	o := runSecurity()
 	if o.timeout {
@@ -85,12 +90,18 @@ func KeychainPassword() (string, error) {
 		return "", &TransportError{fmt.Sprintf("%s: %v", MarkerBroken, o.runErr), true, 60 * time.Second}
 	}
 	if o.rc != 0 {
-		if strings.Contains(o.stderr, "could not be found") {
+		if secretNotFound(o) {
 			return "", &TransportError{MarkerNoItem, true, 10 * time.Second}
 		}
 		return "", &TransportError{MarkerLocked, true, 60 * time.Second}
 	}
-	return strings.TrimSuffix(o.stdout, "\n"), nil
+	pw := strings.TrimSuffix(o.stdout, "\n")
+	if pw == "" {
+		// A clean exit with no output means the item is absent (secret-tool may
+		// exit 0 in that case) — treat it as no-item, not an empty password.
+		return "", &TransportError{MarkerNoItem, true, 10 * time.Second}
+	}
+	return pw, nil
 }
 
 // AskpassMain answers ssh's password prompt from the Keychain. Failure markers
@@ -245,13 +256,13 @@ func ClassifyStderr(text string) *TransportError {
 	}
 	switch {
 	case strings.Contains(text, MarkerBroken):
-		return &TransportError{"askpass cannot run security(1) — check PATH/sandboxing (lp10 retries every minute)", true, 60 * time.Second}
+		return &TransportError{fmt.Sprintf("askpass cannot run %s — check PATH/sandboxing (lp10 retries every minute)", secretToolName), true, 60 * time.Second}
 	case strings.Contains(text, MarkerLocked):
-		return &TransportError{"Keychain is locked — unlock your login Keychain (lp10 retries every minute)", true, 60 * time.Second}
+		return &TransportError{fmt.Sprintf("%s is locked — unlock it (lp10 retries every minute)", secretStoreName), true, 60 * time.Second}
 	case strings.Contains(text, MarkerNoItem):
-		return &TransportError{"no Keychain item — run: " + KeychainHint, true, 10 * time.Second}
+		return &TransportError{"no saved password — run: " + StoreHint, true, 10 * time.Second}
 	case strings.Contains(text, "Permission denied"):
-		return &TransportError{"SSH password rejected — update the Keychain item: " + KeychainHint, true, 10 * time.Second}
+		return &TransportError{"SSH password rejected — update the saved password: " + StoreHint, true, 10 * time.Second}
 	}
 	return nil
 }
