@@ -3,7 +3,10 @@
 > One command, one screen — a terminal player and equalizer for the **Arylic LP10**
 > network audio streamer, driven over a single SSH connection.
 
-![license](https://img.shields.io/badge/license-MIT-blue)
+[![CI](https://github.com/lucasdaddiego/lp10go/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasdaddiego/lp10go/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/lucasdaddiego/lp10go)](https://goreportcard.com/report/github.com/lucasdaddiego/lp10go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/lucasdaddiego/lp10go.svg)](https://pkg.go.dev/github.com/lucasdaddiego/lp10go)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![go](https://img.shields.io/badge/go-1.24%2B-00ADD8)
 ![platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 
