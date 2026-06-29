@@ -6,6 +6,7 @@ package artwork
 // the helpers defined there (solid, pngBytes, tinyPNGHeader) — same package.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -278,5 +279,36 @@ func TestCov_FitBranches(t *testing.T) {
 	mid := solid(700, 700, color.RGBA{})
 	if g := fit(mid, kittyMinPx, kittyMaxPx); g.Bounds() != mid.Bounds() {
 		t.Errorf("in-range fit -> %v, want unchanged %v", g.Bounds(), mid.Bounds())
+	}
+}
+
+// fit's enlargement path must route through bilinear resample (smooth), not
+// box-average downscale (which degenerates to a blocky nearest-neighbour pick when
+// upscaling). A non-uniform sub-minPx image makes the two diverge, so fit's output
+// must equal resample's byte-for-byte. Regression for the blocky-upscale fix.
+func TestCov_FitEnlargesViaResample(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			src.Set(x, y, color.RGBA{uint8(x * 60), uint8(y * 60), 0, 255})
+		}
+	}
+	got, ok := fit(src, kittyMinPx, kittyMaxPx).(*image.RGBA) // long=4 < minPx -> enlarge
+	if !ok {
+		t.Fatal("fit should return a freshly scaled *image.RGBA when enlarging")
+	}
+	want := resample(src, kittyMinPx, kittyMinPx)
+	if !bytes.Equal(got.Pix, want.Pix) {
+		t.Error("fit enlargement must use bilinear resample, not box-average downscale")
+	}
+}
+
+// KittyImage degrades to ("", nil) — and the caller falls back to the half-block /
+// motif path — when png.Encode can't encode the placement. A non-nil zero-area
+// image (cols/rows valid) reaches png.Encode unscaled and fails its size check.
+func TestCov_KittyImageEncodeFailureDegrades(t *testing.T) {
+	empty := image.NewRGBA(image.Rect(0, 0, 0, 0)) // non-nil, zero area
+	if tr, ls := KittyImage(empty, 1, 1, 1, 0, 0); tr != "" || ls != nil {
+		t.Errorf("zero-area image should degrade to (\"\", nil), got (%q, %v)", tr, ls)
 	}
 }

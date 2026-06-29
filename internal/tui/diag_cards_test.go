@@ -31,23 +31,29 @@ func TestDiagCardsLayoutWide(t *testing.T) {
 	view := m.View()
 	flat := clean(view)
 	for _, want := range []string{
-		"╭─ device", "╭─ audio", "╭─ resources", "╭─ latency",
+		"diagnostics",
+		"─ device", "─ network", "─ hardware", "─ audio", "─ resources", "─ latency", "─ services",
 		"dac", "S16_LE", "● live", "buffer",
 		"tasks", "running", "1200 MHz",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("wide diag cards missing %q", want)
+			t.Errorf("wide diag missing %q", want)
 		}
 	}
+	// the two columns sit side by side: device (left) and audio (right) share a row.
+	if !hasRow(flat, "─ device", "─ audio") {
+		t.Error("wide diag should place the device and audio columns side by side")
+	}
+	// every framed line stays exactly cols wide (section padding measured by visible width)
 	for i, ln := range strings.Split(view, "\n") {
 		if w := lipgloss.Width(ln); w != m.cols {
-			t.Errorf("card line %d width %d, want %d: %q", i, w, m.cols, clean(ln))
+			t.Errorf("diag line %d width %d, want %d: %q", i, w, m.cols, clean(ln))
 		}
 	}
 
-	// A narrow terminal falls back to the single-column stacked read-out (no cards).
+	// A narrow terminal falls back to the single-column stacked read-out.
 	m.cols = 90
-	if strings.Contains(clean(m.View()), "╭─ device") {
-		t.Error("narrow diag should use the stacked layout, not cards")
+	if hasRow(clean(m.View()), "─ device", "─ audio") {
+		t.Error("narrow diag should stack the sections, not place them side by side")
 	}
 }

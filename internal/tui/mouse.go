@@ -8,12 +8,13 @@ import (
 
 // The dashboard frame fills the whole window (View's lipgloss.Place receives
 // content already sized to cols×rows), so the body has a fixed origin: the left
-// border (1) + left padding (2), and the top border (1) + top padding (1). Every
-// hit-zone is recorded in these absolute terminal coordinates, matching the X/Y
-// a tea.MouseMsg carries.
+// border (1) + left padding (2), and the top border (1) + top padding (0 — the
+// frame is symmetric, content flush to the top and bottom borders). Every hit-zone
+// is recorded in these absolute terminal coordinates, matching the X/Y a
+// tea.MouseMsg carries.
 const (
 	bodyX0 = 3
-	bodyY0 = 2
+	bodyY0 = 1
 )
 
 // rect is a half-open cell rectangle [x,x+w) × [y,y+h) in absolute coords.

@@ -106,11 +106,7 @@ func Load() Config {
 	// Clamp to a sane [1,100]: 0/negative would freeze the volume keys, and an
 	// absurd step (e.g. a hostile config, or a float that saturated to MaxInt)
 	// would overflow AdjustVol before clamp100 rescued it.
-	if cfg.VolStep < 1 {
-		cfg.VolStep = 1
-	} else if cfg.VolStep > 100 {
-		cfg.VolStep = 100
-	}
+	cfg.VolStep = clampVol(cfg.VolStep)
 	if h := os.Getenv(HostEnv); h != "" {
 		cfg.Host = h
 	}

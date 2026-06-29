@@ -56,11 +56,20 @@ type tuiSession struct {
 	buf  *bytes.Buffer
 }
 
-func bootTUI(t *testing.T) *tuiSession {
+func bootTUI(t *testing.T) *tuiSession { return bootTUISetup(t, nil) }
+
+// bootTUISetup launches the real binary under a pty in a hermetic temp env. If
+// setup is non-nil it runs before launch, given the config and state dirs, so a
+// test can plant files (e.g. a config.toml) the binary then reads at startup.
+func bootTUISetup(t *testing.T, setup func(cfgDir, stateDir string)) *tuiSession {
 	t.Helper()
 	bin := testutil.BuildMain(t)
 	fake := testutil.FakeSSH(t)
 	tmp := t.TempDir()
+	cfgDir, stateDir := filepath.Join(tmp, "config"), filepath.Join(tmp, "state")
+	if setup != nil {
+		setup(cfgDir, stateDir)
+	}
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
@@ -68,8 +77,8 @@ func bootTUI(t *testing.T) *tuiSession {
 		"LP10_FAKE_SCENARIO=normal",
 		"LP10_ASKPASS=",
 		"LP10_HOST=",
-		"LP10_STATE_DIR="+filepath.Join(tmp, "state"),
-		"XDG_CONFIG_HOME="+filepath.Join(tmp, "config"),
+		"LP10_STATE_DIR="+stateDir,
+		"XDG_CONFIG_HOME="+cfgDir,
 	)
 	cmd.Env = append(cmd.Env, coverEnv()...)
 	// Real X/Y pixel dims so the binary's cellPixelSize() reads them via TIOCGWINSZ.
@@ -160,6 +169,38 @@ func TestSigtermExits143AndCleansUp(t *testing.T) {
 	if !strings.Contains(s.output(), "\x1b]0;") {
 		t.Error("terminal-title reset (cleanup) did not run on SIGTERM")
 	}
+}
+
+// A SIGINT delivered as a signal (distinct from the Ctrl-C key byte that
+// TestCtrlCExits130 sends) is caught by Run's own signal goroutine and maps to
+// exit 130 — covering the SIGINT arm that the keyboard path doesn't.
+func TestSigintSignalExits130(t *testing.T) {
+	s := bootTUI(t)
+	s.cmd.Process.Signal(syscall.SIGINT)
+	if code := s.waitExit(t); code != 130 {
+		t.Errorf("exit code = %d, want 130 on SIGINT", code)
+	}
+}
+
+// A broken config.toml surfaces as a visible startup warning (config.Load sets
+// cfg.Warn; Run threads it to st.Note) rather than being silently ignored —
+// covering Run's cfg.Warn branch end to end.
+func TestBrokenConfigSurfacesWarning(t *testing.T) {
+	s := bootTUISetup(t, func(cfgDir, _ string) {
+		dir := filepath.Join(cfgDir, "lp10")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// invalid TOML -> config.Load can't parse it -> cfg.Warn is set
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("not = valid = toml ["), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if out := s.output(); !strings.Contains(out, "config.toml ignored") {
+		t.Errorf("a broken config should surface a startup warning; none in output:\n%s", out)
+	}
+	s.ptmx.Write([]byte("q"))
+	s.waitExit(t)
 }
 
 // TestAskpassIntegration drives the real binary down its SSH_ASKPASS hot path

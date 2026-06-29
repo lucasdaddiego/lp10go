@@ -807,7 +807,7 @@ func (m *model) View() string {
 	framed := lipgloss.NewStyle().
 		Border(lipgloss.ThickBorder()).
 		BorderForeground(m.sty.border).
-		Padding(1, 2, 0, 2). // breathing room between the border and the content
+		Padding(0, 2, 0, 2). // symmetric: content flush to the top and bottom borders, breathing room on the sides
 		Render(body)
 	return lipgloss.Place(cols, rows, lipgloss.Center, lipgloss.Center, framed)
 }
@@ -845,7 +845,7 @@ func (m *model) renderDashboard(s protocol.Snapshot, now time.Time, W int, full 
 	if s.Error != "" && (s.Fatal || (s.Connected && now.Sub(s.ErrorAt) < ErrorDisplayDuration)) {
 		errLine = stRed.Render(Clip(GL["warn"]+" "+friendlyError(s.Error), W))
 	}
-	inner := m.rows - 3
+	inner := m.rows - 2
 
 	if full {
 		// EQ: one horizontal row per band (W-wide), pinned to the bottom under a
@@ -868,14 +868,28 @@ func (m *model) renderDashboard(s protocol.Snapshot, now time.Time, W int, full 
 		if coverH < 6 {
 			coverH = 6
 		}
-		cellAR := 2.0 // cell height ÷ width; the column count that squares the box
+		cellAR := 2.0 // cell height ÷ width; converts a cell count to display pixels
 		if m.cellW > 0 && m.cellH > 0 {
 			cellAR = float64(m.cellH) / float64(m.cellW)
 		}
-		coverW := int(float64(coverH)*cellAR + 0.5)
+		// Size the box to the cover's TRUE aspect ratio (album art isn't always
+		// square) so neither the half-block raster (which stretches to fill its cell
+		// box) nor the Kitty placement distorts it: the box's display footprint
+		// (coverW·cellW × coverH·cellH px) tracks the source's width:height. A square
+		// cover keeps the old square box; a non-square one no longer gets stretched.
+		srcAR := 1.0 // source width ÷ height
+		if s.Art != nil {
+			if b := s.Art.Bounds(); b.Dx() > 0 && b.Dy() > 0 {
+				srcAR = float64(b.Dx()) / float64(b.Dy())
+			}
+		}
+		coverW := int(float64(coverH)*cellAR*srcAR + 0.5)
 		if maxW := W - 37; coverW > maxW { // reserve room for the metadata + volume columns
 			coverW = maxW
-			coverH = int(float64(coverW)/cellAR + 0.5)
+			coverH = int(float64(coverW)/(cellAR*srcAR) + 0.5)
+		}
+		if coverH < 6 {
+			coverH = 6
 		}
 		if coverW < 8 {
 			coverW = 8
@@ -1789,7 +1803,7 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 	add(m.gridRow("firmware", fw, "build", build, W))
 	add(m.gridRow("mac", mac, "cores", cores, W))
 
-	add(m.dividerRow("connection", W))
+	add(m.dividerRow("network", W))
 	rxTxt, rxPen := "—", t.sDim
 	if !lastRx.IsZero() {
 		secs := now.Sub(lastRx).Seconds()
@@ -1799,16 +1813,11 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 	if att == 1 {
 		attWord = "attempt"
 	}
-	add(m.diagLine("player", t.sTxt.Render("ssh stream · rx ")+rxPen.Render(rxTxt)+
-		t.sTxt.Render(fmt.Sprintf(" ago · %d %s", att, attWord))))
 	tunTxt, tunPen := "down", stRed
 	if eqConn {
 		tunTxt, tunPen = "live", t.sAcc
 	}
-	add(m.diagLine("control", t.sTxt.Render("tunnel :2018 · ")+tunPen.Render(tunTxt)))
-
 	if dev != nil && (dev.IP != "" || dev.Net != "") {
-		add(m.dividerRow("network", W))
 		if dev.Net == "wifi" {
 			band := ""
 			if f, err := strconv.Atoi(dev.Freq); err == nil && f > 0 {
@@ -1830,8 +1839,7 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 					if lq, e := strconv.Atoi(si.LinkQ); e == nil && lq > 0 {
 						detail += fmt.Sprintf("  · link %d/70", lq)
 					}
-					detail = Clip(detail, W-10-gw-2-DispW(valTxt)) // never wrap the row
-					add(m.diagGauge("signal", t.gaugeBar(float64(dbm+90)/60, gw, pen), pen.Render(valTxt), detail))
+					add(m.diagGauge("signal", t.gaugeBar(float64(dbm+90)/60, gw, pen), pen.Render(valTxt), detail, W))
 				}
 			}
 		} else {
@@ -1863,6 +1871,10 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 			latLabel = ""
 		}
 	}
+	// lp10's own connection to the device, folded into the network section.
+	add(m.diagLine("player", t.sTxt.Render("ssh stream · rx ")+rxPen.Render(rxTxt)+
+		t.sTxt.Render(fmt.Sprintf(" ago · %d %s", att, attWord))))
+	add(m.diagLine("control", t.sTxt.Render("tunnel :2018 · ")+tunPen.Render(tunTxt)))
 
 	add(m.dividerRow("audio", W))
 	formatTxt := "—"
@@ -1883,7 +1895,7 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 	if s.Muted {
 		volPen, volTxt = stRed, "muted"
 	}
-	add(m.diagGauge("volume", t.gaugeBar(float64(s.Vol)/100, gw, volPen), volPen.Render(volTxt), ""))
+	add(m.diagGauge("volume", t.gaugeBar(float64(s.Vol)/100, gw, volPen), volPen.Render(volTxt), "", W))
 	add(m.diagLine("eq", m.eqReadout(eqv)))
 
 	add(m.dividerRow("resources", W))
@@ -1902,7 +1914,7 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 					detail += " · 5m " + loads[1] + " · 15m " + loads[2]
 				}
 				add(m.diagGauge("cpu", t.gaugeBar(frac, gw, pen),
-					pen.Render(fmt.Sprintf("%d%%", int(frac*100+0.5))), detail))
+					pen.Render(fmt.Sprintf("%d%%", int(frac*100+0.5))), detail, W))
 			}
 		}
 		av, e1 := strconv.Atoi(si.Avail)
@@ -1912,13 +1924,13 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 			pen := lo(uf*100, 70, 88)
 			add(m.diagGauge("memory", t.gaugeBar(uf, gw, pen),
 				pen.Render(fmt.Sprintf("%d%%", int(uf*100+0.5))),
-				fmt.Sprintf("   %d / %d MB free", av/1024, tot/1024)))
+				fmt.Sprintf("   %d / %d MB free", av/1024, tot/1024), W))
 		}
 		if mc, err := strconv.Atoi(si.TempmC); err == nil {
 			c := mc / 1000
 			pen := lo(float64(c), 60, 75)
 			add(m.diagGauge("temp", t.gaugeBar(float64(c)/85, gw, pen),
-				pen.Render(fmt.Sprintf("%d °C", c)), "   SoC"))
+				pen.Render(fmt.Sprintf("%d °C", c)), "   SoC", W))
 		}
 	}
 	if dev != nil {
@@ -1929,8 +1941,18 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 			pen := lo(uf*100, 80, 92)
 			add(m.diagGauge("storage", t.gaugeBar(uf, gw, pen),
 				pen.Render(fmt.Sprintf("%d%%", int(uf*100+0.5))),
-				fmt.Sprintf("   %d / %d MB used · data", used/1024, tot/1024)))
+				fmt.Sprintf("   %d / %d MB used · data", used/1024, tot/1024), W))
 		}
+	}
+
+	add(m.dividerRow("hardware", W))
+	for _, h := range confHardware {
+		add(m.diagLine(h.k, t.sTxt.Render(Clip(h.v, max(1, W-diagLabelW)))))
+	}
+
+	add(m.dividerRow("services", W))
+	for _, r := range m.serviceStrip(W) {
+		add(r)
 	}
 
 	// footer (and any device error) pins to the bottom; the gap fills the frame
@@ -1943,40 +1965,11 @@ func (m *model) renderDiagStacked(s protocol.Snapshot, now time.Time, W int) str
 	tail = append(tail, t.sDmr.Render("live · any key returns to the dashboard"))
 
 	// on a too-short pane, trim the read-out from the bottom and flag it
-	if room := m.rows - 3 - len(tail); room > 2 && len(L) > room {
+	if room := m.rows - 2 - len(tail); room > 2 && len(L) > room {
 		L = L[:room]
 		L[room-1] = t.sDmr.Render("… resize for more")
 	}
-	return strings.Join(frameBody(L, tail, m.rows-3, false), "\n") // top-aligned: read-out hugs the top, footer stays pinned below
-}
-
-// diagCard renders a titled rounded box: "╭─ title ─…─╮", each row framed by
-// "│ … │", then "╰──…──╯" — every line exactly w display cols. Rows are pre-styled
-// and right-padded to the inner width (callers keep each row ≤ w-4 wide).
-func (m *model) diagCard(title string, rows []string, w int) []string {
-	t := m.sty
-	inner := w - 4 // │ + space … space + │
-	if inner < 1 {
-		inner = 1
-	}
-	bar := func(n int) string {
-		if n < 0 {
-			n = 0
-		}
-		return strings.Repeat(GL["h"], n)
-	}
-	rule := t.sDmr
-	out := make([]string, 0, len(rows)+2)
-	out = append(out, rule.Render(GL["tl"]+GL["h"])+" "+t.sAcc.Bold(true).Render(title)+" "+
-		rule.Render(bar(w-DispW(title)-5)+GL["tr"]))
-	v := rule.Render(GL["v"])
-	for _, r := range rows {
-		// clip then pad to the exact inner VISIBLE width (lipgloss.Width ignores the
-		// ANSI in a styled row; DispW would count those bytes and skip the padding,
-		// scattering the right border — the bug that broke the grid on a real terminal).
-		out = append(out, v+" "+padVis(m.clipStyled(r, inner), inner)+" "+v)
-	}
-	return append(out, rule.Render(GL["bl"]+bar(w-2)+GL["br"]))
+	return strings.Join(frameBody(L, tail, m.rows-2, false), "\n") // top-aligned: read-out hugs the top, footer stays pinned below
 }
 
 // renderDiagCards is the wide-terminal diagnostics layout: a two-column grid of
@@ -1984,6 +1977,12 @@ func (m *model) diagCard(title string, rows []string, w int) []string {
 // static identity/connectivity side); right: audio · resources · latency (the live
 // metrics). Filling the space the stacked view left empty and surfacing the
 // audio-chain / contention metrics. Sparklines and gauges get full card width.
+// renderDiagCards is the wide diagnostics layout — the "vitals ribbon" design: a
+// masthead carrying a health VERDICT, a one-line color-coded vitals ribbon under a
+// heavy rule (health at a glance), then the detail in two boxless, ruled columns
+// (identity left, live right). No card boxes — the section rule + a left gutter of
+// aligned labels carry the structure, so it reads faster and sits a couple lines
+// shorter than the old 7-card grid.
 func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) string {
 	t := m.sty
 	lastRx, dData, att, derr, si := m.st.DiagView()
@@ -1991,33 +1990,46 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 	netv := m.st.NetView()
 	eqConn, eqv := m.st.EQView()
 
-	lo := func(v, a, b float64) lipgloss.Style { // lower-is-better health picker
+	// severity (0 good · 1 warn · 2 bad) and the matching pen — one shared rule so a
+	// ribbon chip, its gauge, and the verdict rollup can never disagree.
+	sevPen := [3]lipgloss.Style{t.sAcc, stWarn, stRed}
+	sev := func(v, a, b float64) int {
 		switch {
 		case v < a:
-			return t.sAcc
+			return 0
 		case v < b:
-			return stWarn
+			return 1
 		default:
-			return stRed
+			return 2
+		}
+	}
+	lo := func(v, a, b float64) lipgloss.Style { return sevPen[sev(v, a, b)] }
+	worst := 0
+	bump := func(sv int) {
+		if sv > worst {
+			worst = sv
 		}
 	}
 
-	cardWL := (W - 2) / 2 // two cards + a 2-col gutter span W
-	cardWR := W - 2 - cardWL
-	innerL, innerR := cardWL-4, cardWR-4
-	const gwc = 12 // gauge width inside a card
+	// two asymmetric columns: identity left, live right (the live side carries the
+	// wider service strip, the eq line, and the sparklines).
+	const (
+		gutter = 4
+		gwc    = 12 // gauge width
+	)
+	leftW := (W - gutter) * 44 / 100
+	if leftW < 30 {
+		leftW = 30
+	}
+	rightW := W - gutter - leftW
+	innerL, innerR := leftW-2, rightW-2 // rows sit under a 2-space indent
 
-	// row builders (label column + value), clipped/padded to a card's inner width.
 	kvP := func(inner int, label, value string, pen lipgloss.Style) string {
-		return t.sDim.Render(label) + labelGap(label, diagLabelW) +
-			pen.Render(Clip(value, inner-diagLabelW))
+		return t.sDim.Render(label) + labelGap(label, diagLabelW) + pen.Render(Clip(value, max(1, inner-diagLabelW)))
 	}
-	kvR := func(label, styled string) string { // pre-styled value; caller fits width
-		return t.sDim.Render(label) + labelGap(label, diagLabelW) + styled
-	}
+	kvR := func(label, styled string) string { return t.sDim.Render(label) + labelGap(label, diagLabelW) + styled }
 	cg := func(inner int, label, valuePlain string, frac float64, pen lipgloss.Style, detail string) string {
-		out := t.sDim.Render(label) + labelGap(label, diagLabelW) +
-			t.gaugeBar(frac, gwc, pen) + "  " + pen.Render(valuePlain)
+		out := t.sDim.Render(label) + labelGap(label, diagLabelW) + t.gaugeBar(frac, gwc, pen) + "  " + pen.Render(valuePlain)
 		if detail != "" {
 			if d := Clip(detail, inner-(diagLabelW+gwc+2+DispW(valuePlain))-1); d != "" {
 				out += " " + t.sDmr.Render(d)
@@ -2025,8 +2037,188 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 		}
 		return out
 	}
+	// boxless section: a left-anchored "─ title ─────" head + indented rows.
+	sectionHead := func(title string, w int) string {
+		fill := w - 3 - DispW(title) // "─ " + title + " "
+		if fill < 0 {
+			fill = 0
+		}
+		return t.sDmr.Render("─ ") + t.sAcc.Bold(true).Render(title) + t.sDmr.Render(" "+strings.Repeat("─", fill))
+	}
+	section := func(title string, rows []string, w int) []string {
+		out := make([]string, 0, len(rows)+1)
+		out = append(out, sectionHead(title, w))
+		for _, r := range rows {
+			out = append(out, "  "+m.clipStyled(r, w-2))
+		}
+		return out
+	}
 
-	// ---- device card ----
+	// ---- hoist the live numeric vitals: the ribbon (top) and the gauges (below)
+	// read the same values, and each feeds the verdict rollup. ----
+	var (
+		haveCpu, haveMem, haveTemp, haveData, haveBuf bool
+		cpuFrac, memUf, dataUf, bufFill               float64
+		tempC                                         int
+		cpuDetail, memDetail, dataDetail              string
+		bufSev                                        int
+	)
+	if si != nil {
+		loads := strings.Fields(si.Load)
+		nc, _ := strconv.Atoi(si.NCPU)
+		if nc < 1 {
+			nc = 1
+		}
+		if len(loads) >= 1 {
+			if l1, err := strconv.ParseFloat(loads[0], 64); err == nil {
+				cpuFrac, haveCpu = l1/float64(nc), true
+				cpuDetail = "1m " + loads[0]
+				if si.CpuKHz != "" {
+					if khz, e := strconv.Atoi(si.CpuKHz); e == nil {
+						cpuDetail += fmt.Sprintf(" · %d MHz", khz/1000)
+					}
+				}
+			}
+		}
+		if av, e1 := strconv.Atoi(si.Avail); e1 == nil {
+			if tot, e2 := strconv.Atoi(si.Total); e2 == nil && tot > 0 {
+				memUf, haveMem = float64(tot-av)/float64(tot), true
+				memDetail = fmt.Sprintf("%d/%d MB free", av/1024, tot/1024)
+			}
+		}
+		if mc, err := strconv.Atoi(si.TempmC); err == nil {
+			tempC, haveTemp = mc/1000, true
+		}
+		if si.BufAvail != "" && si.BufSize != "" {
+			if a2, e := strconv.Atoi(si.BufAvail); e == nil {
+				if bs, e2 := strconv.Atoi(si.BufSize); e2 == nil && bs > 0 {
+					bufFill = float64(bs-a2) / float64(bs)
+					if bufFill < 0 {
+						bufFill = 0
+					}
+					haveBuf = true
+					switch { // buffer health is inverted: a FULL ring is healthy
+					case bufFill >= 0.5:
+						bufSev = 0
+					case bufFill >= 0.25:
+						bufSev = 1
+					default:
+						bufSev = 2
+					}
+				}
+			}
+		}
+	}
+	if dev != nil {
+		if u, e1 := strconv.Atoi(dev.DataUsed); e1 == nil {
+			if tt, e2 := strconv.Atoi(dev.DataTotal); e2 == nil && tt > 0 {
+				dataUf, haveData = float64(u)/float64(tt), true
+				dataDetail = fmt.Sprintf("%d/%d MB /lsync", u/1024, tt/1024)
+			}
+		}
+	}
+	volPen, volTxt := t.sAcc, fmt.Sprintf("%d%%", s.Vol)
+	if s.Muted {
+		volPen, volTxt = stRed, "muted"
+	}
+
+	// the buffer ring is only a health signal WHILE PLAYING — an empty ring on an
+	// idle/paused device is normal, so it stays neutral and out of the verdict then.
+	playing := si != nil && si.PcmState == "RUNNING"
+	bufPen, bufDetail := t.sDim, "idle"
+	if playing {
+		bufPen, bufDetail = sevPen[bufSev], "ring"
+	}
+
+	// roll the live health signals into the worst-of verdict.
+	if haveCpu {
+		bump(sev(cpuFrac*100, 60, 85))
+	}
+	if haveMem {
+		bump(sev(memUf*100, 70, 88))
+	}
+	if haveTemp {
+		bump(sev(float64(tempC), 60, 75))
+	}
+	if haveData {
+		bump(sev(dataUf*100, 80, 92))
+	}
+	if haveBuf && playing {
+		bump(bufSev)
+	}
+	if !lastRx.IsZero() {
+		bump(sev(now.Sub(lastRx).Seconds(), 3, 8))
+	}
+
+	// ---- status line: title + health verdict + the key live vitals (left), the
+	// connection light + clock (right). One dense line — no separate ribbon, no gap. ----
+	clock := now.Format("15:04")
+	var hr string
+	var hrW int
+	silent := false
+	switch {
+	case !s.Connected:
+		hr, hrW = stWarn.Render("● disconnected"), DispW("● disconnected")
+	case !dData.IsZero() && now.Sub(dData) > workers.SilentAfter:
+		hr, hrW, silent = stWarn.Render("● LUCI silent · "+clock), DispW("● LUCI silent · "+clock), true
+	default:
+		hr, hrW = t.sAcc.Render("●")+t.sDim.Render(" "+clock), DispW("● "+clock)
+	}
+	left, leftHdrW := t.sAcc.Bold(true).Render("diagnostics"), DispW("diagnostics")
+	if s.Connected && !silent { // a fresh device gets a one-glance health verdict
+		verWord, verPen := "healthy", t.sAcc
+		switch worst {
+		case 1:
+			verWord, verPen = "warn", stWarn
+		case 2:
+			verWord, verPen = "fault", stRed
+		}
+		vd := "● " + verWord
+		left += "   " + verPen.Render(vd)
+		leftHdrW += 3 + DispW(vd)
+	}
+	// the key live vitals, health-coloured, inline after the verdict. (Latency has its
+	// own section, so it isn't duplicated here.) Each is appended only while it still
+	// fits clear of the clock, so a narrow terminal sheds the trailing ones cleanly.
+	type vital struct {
+		label, value string
+		pen          lipgloss.Style
+	}
+	var vitals []vital
+	if haveTemp {
+		vitals = append(vitals, vital{"temp", fmt.Sprintf("%d °C", tempC), sevPen[sev(float64(tempC), 60, 75)]})
+	}
+	if haveCpu {
+		vitals = append(vitals, vital{"cpu", fmt.Sprintf("%d%%", int(cpuFrac*100+0.5)), sevPen[sev(cpuFrac*100, 60, 85)]})
+	}
+	if haveMem {
+		vitals = append(vitals, vital{"mem", fmt.Sprintf("%d%%", int(memUf*100+0.5)), sevPen[sev(memUf*100, 70, 88)]})
+	}
+	if haveBuf {
+		bufVal := fmt.Sprintf("%d%%", int(bufFill*100+0.5))
+		if !playing { // an empty ring while stopped is idle, not a reading worth a number
+			bufVal = "idle"
+		}
+		vitals = append(vitals, vital{"buffer", bufVal, bufPen})
+	}
+	// volume is intentionally NOT a vital here — it's a setting, not a health signal,
+	// and it already has its gauge in the audio section.
+	for i, v := range vitals {
+		seg := t.sDim.Render(v.label) + " " + v.pen.Render(v.value)
+		segW := DispW(v.label + " " + v.value)
+		if leftHdrW+3+segW > W-hrW-2 { // keep clear of the clock; drop the rest
+			break
+		}
+		if i == 0 {
+			left += "   " + seg
+		} else {
+			left += t.sDmr.Render(" · ") + seg
+		}
+		leftHdrW += 3 + segW
+	}
+	masthead := between(left, leftHdrW, hr, hrW, W)
+
+	// ---- left column: device · network · hardware (static identity) ----
 	host := m.cfg.User + "@" + m.cfg.Host
 	model, os, fw, cores, up, build, mac := "—", "—", "—", "—", "—", "—", "—"
 	if si != nil {
@@ -2061,7 +2253,7 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 	if m.cfg.Discovered {
 		host += " · mDNS"
 	}
-	deviceCard := m.diagCard("device", []string{
+	deviceRows := []string{
 		kvP(innerL, "host", host, t.sTxt),
 		kvP(innerL, "device", model, t.sTxt),
 		kvP(innerL, "os", os+" · "+cores+" cores", t.sTxt),
@@ -2069,9 +2261,8 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 		kvP(innerL, "build", build, t.sTxt),
 		kvP(innerL, "uptime", up, t.sTxt),
 		kvP(innerL, "mac", mac, t.sTxt),
-	}, cardWL)
+	}
 
-	// ---- connection card ----
 	rxTxt, rxPen := "—", t.sDim
 	if !lastRx.IsZero() {
 		secs := now.Sub(lastRx).Seconds()
@@ -2085,21 +2276,8 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 	if eqConn {
 		tunTxt, tunPen = "live", t.sAcc
 	}
-	connCard := m.diagCard("connection", []string{
-		kvR("player", t.sTxt.Render("ssh · rx ")+rxPen.Render(rxTxt)+t.sTxt.Render(fmt.Sprintf(" ago · %d %s", att, attWord))),
-		kvR("control", t.sTxt.Render("tunnel :2018 · ")+tunPen.Render(tunTxt)),
-	}, cardWL)
-
-	leftLines := append(deviceCard, connCard...)
-
-	// latency is a LIVE metric (like cpu/temp), so it rides the right column with
-	// audio + resources — which also balances the two columns (device/connection/
-	// network are the static, identity side on the left).
-	var latencyCard []string
-
-	// ---- network card (left) ----
+	var nrows, lrows []string
 	if dev != nil && (dev.IP != "" || dev.Net != "") {
-		var nrows []string
 		if dev.Net == "wifi" {
 			band := ""
 			if f, err := strconv.Atoi(dev.Freq); err == nil && f > 0 {
@@ -2142,11 +2320,7 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 		if netv.RatesOK {
 			nrows = append(nrows, kvR("traffic", t.sDim.Render("rx ")+t.sTxt.Render(fmtRate(netv.RxRate))+t.sDim.Render(" · tx ")+t.sTxt.Render(fmtRate(netv.TxRate))))
 		}
-		leftLines = append(leftLines, m.diagCard("network", nrows, cardWL)...)
-
-		// latency rows (built here while netv is in hand) — wide sparkline per target;
-		// the card itself is placed in the RIGHT column below, sized to cardWR.
-		var lrows []string
+		// latency rows (built while netv is in hand; the section is placed right).
 		sw := innerR - 19 // name(6)+avg(6)+1+jit(5)+1
 		if sw < 4 {
 			sw = 4
@@ -2160,18 +2334,29 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 			if ps.Peak > ps.Avg*2 && ps.Peak-ps.Avg > 10 {
 				peakPen = stWarn
 			}
-			row := t.sDim.Render(padDisp(names[i], 6)) +
-				t.sTxt.Render(rpadDisp(fmtLatencyMs(ps.Avg)+"ms", 6)) + " " +
-				peakPen.Render(padDisp("±"+fmtLatencyMs(ps.Jitter), 5)) + " " +
-				t.sDim.Render(sparkline(ps.Series, sw))
-			lrows = append(lrows, row)
-		}
-		if len(lrows) > 0 {
-			latencyCard = m.diagCard("latency", lrows, cardWR)
+			lrows = append(lrows, t.sDim.Render(padDisp(names[i], 6))+
+				t.sTxt.Render(rpadDisp(fmtLatencyMs(ps.Avg)+"ms", 6))+" "+
+				peakPen.Render(padDisp("±"+fmtLatencyMs(ps.Jitter), 5))+" "+
+				t.sDim.Render(sparkline(ps.Series, sw)))
 		}
 	}
+	// lp10's own link to the device (ssh player stream + :2018 control tunnel).
+	nrows = append(nrows,
+		kvR("player", t.sTxt.Render("ssh · rx ")+rxPen.Render(rxTxt)+t.sTxt.Render(fmt.Sprintf(" ago · %d %s", att, attWord))),
+		kvR("control", t.sTxt.Render("tunnel :2018 · ")+tunPen.Render(tunTxt)))
 
-	// ---- audio card ----
+	hwRows := make([]string, 0, len(confHardware))
+	for _, h := range confHardware {
+		hwRows = append(hwRows, kvP(innerL, h.k, h.v, t.sTxt))
+	}
+
+	left2 := section("device", deviceRows, leftW)
+	left2 = append(left2, "")
+	left2 = append(left2, section("network", nrows, leftW)...)
+	left2 = append(left2, "")
+	left2 = append(left2, section("hardware", hwRows, leftW)...)
+
+	// ---- right column: audio · resources · latency · services (live) ----
 	formatTxt := "—"
 	if tr := s.Track; tr != nil {
 		var ps []string
@@ -2199,124 +2384,147 @@ func (m *model) renderDiagCards(s protocol.Snapshot, now time.Time, W int) strin
 			parts = append(parts, si.DacCh+"ch")
 		}
 		dac := t.sTxt.Render(strings.Join(parts, " · "))
-		if si.PcmState == "RUNNING" {
+		if playing {
 			dac += t.sAcc.Render(" ● live")
 		}
 		arows = append(arows, kvR("dac", dac))
 	}
-	if si != nil && si.BufAvail != "" && si.BufSize != "" {
-		if av, e1 := strconv.Atoi(si.BufAvail); e1 == nil {
-			if bs, e2 := strconv.Atoi(si.BufSize); e2 == nil && bs > 0 {
-				fill := float64(bs-av) / float64(bs) // queued frames / ring size
-				if fill < 0 {
-					fill = 0
-				}
-				pen := stRed // buffer health is inverted: a FULL ring is healthy
-				switch {
-				case fill >= 0.5:
-					pen = t.sAcc
-				case fill >= 0.25:
-					pen = stWarn
-				}
-				arows = append(arows, cg(innerR, "buffer", fmt.Sprintf("%d%%", int(fill*100+0.5)), fill, pen, "ring"))
-			}
-		}
-	}
-	volPen, volTxt := t.sAcc, fmt.Sprintf("%d%%", s.Vol)
-	if s.Muted {
-		volPen, volTxt = stRed, "MUTED"
+	if haveBuf {
+		arows = append(arows, cg(innerR, "buffer", fmt.Sprintf("%d%%", int(bufFill*100+0.5)), bufFill, bufPen, bufDetail))
 	}
 	arows = append(arows, cg(innerR, "volume", volTxt, float64(s.Vol)/100, volPen, ""))
 	arows = append(arows, kvR("eq", m.clipStyled(m.eqReadout(eqv), innerR-diagLabelW)))
-	rightLines := m.diagCard("audio", arows, cardWR)
 
-	// ---- resources card ----
 	var rrows []string
-	if si != nil {
-		loads := strings.Fields(si.Load)
-		nc, _ := strconv.Atoi(si.NCPU)
-		if nc < 1 {
-			nc = 1
-		}
-		if len(loads) >= 1 {
-			if l1, err := strconv.ParseFloat(loads[0], 64); err == nil {
-				frac := l1 / float64(nc)
-				detail := "1m " + loads[0]
-				if si.CpuKHz != "" {
-					if khz, e := strconv.Atoi(si.CpuKHz); e == nil {
-						detail += fmt.Sprintf(" · %d MHz", khz/1000)
-					}
-				}
-				rrows = append(rrows, cg(innerR, "cpu", fmt.Sprintf("%d%%", int(frac*100+0.5)), frac, lo(frac*100, 60, 85), detail))
-			}
-		}
-		if si.Procs != "" {
-			if run, tot, ok := strings.Cut(si.Procs, "/"); ok {
-				rrows = append(rrows, kvR("tasks", t.sTxt.Render(run)+t.sDim.Render(" running · ")+t.sTxt.Render(tot)+t.sDim.Render(" total")))
-			}
-		}
-		av, e1 := strconv.Atoi(si.Avail)
-		tot, e2 := strconv.Atoi(si.Total)
-		if e1 == nil && e2 == nil && tot > 0 {
-			uf := float64(tot-av) / float64(tot)
-			rrows = append(rrows, cg(innerR, "memory", fmt.Sprintf("%d%%", int(uf*100+0.5)), uf, lo(uf*100, 70, 88), fmt.Sprintf("%d/%d MB free", av/1024, tot/1024)))
-		}
-		if mc, err := strconv.Atoi(si.TempmC); err == nil {
-			c := mc / 1000
-			rrows = append(rrows, cg(innerR, "temp", fmt.Sprintf("%d °C", c), float64(c)/85, lo(float64(c), 60, 75), "SoC"))
+	if haveCpu {
+		rrows = append(rrows, cg(innerR, "cpu", fmt.Sprintf("%d%%", int(cpuFrac*100+0.5)), cpuFrac, lo(cpuFrac*100, 60, 85), cpuDetail))
+	}
+	if si != nil && si.Procs != "" {
+		if run, tot, ok := strings.Cut(si.Procs, "/"); ok {
+			rrows = append(rrows, kvR("tasks", t.sTxt.Render(run)+t.sDim.Render(" running · ")+t.sTxt.Render(tot)+t.sDim.Render(" total")))
 		}
 	}
-	if dev != nil {
-		gauge := func(label string, used, total string, a, b float64, suffix string) {
-			u, e1 := strconv.Atoi(used)
-			tt, e2 := strconv.Atoi(total)
-			if e1 == nil && e2 == nil && tt > 0 {
-				uf := float64(u) / float64(tt)
-				rrows = append(rrows, cg(innerR, label, fmt.Sprintf("%d%%", int(uf*100+0.5)), uf, lo(uf*100, a, b), fmt.Sprintf("%d/%d MB %s", u/1024, tt/1024, suffix)))
-			}
-		}
-		gauge("data", dev.DataUsed, dev.DataTotal, 80, 92, "/lsync")
+	if haveMem {
+		rrows = append(rrows, cg(innerR, "memory", fmt.Sprintf("%d%%", int(memUf*100+0.5)), memUf, lo(memUf*100, 70, 88), memDetail))
 	}
-	rightLines = append(rightLines, m.diagCard("resources", rrows, cardWR)...)
-	rightLines = append(rightLines, latencyCard...) // live metric, balances the columns
+	if haveTemp {
+		rrows = append(rrows, cg(innerR, "temp", fmt.Sprintf("%d °C", tempC), float64(tempC)/85, lo(float64(tempC), 60, 75), "SoC"))
+	}
+	if haveData {
+		rrows = append(rrows, cg(innerR, "data", fmt.Sprintf("%d%%", int(dataUf*100+0.5)), dataUf, lo(dataUf*100, 80, 92), dataDetail))
+	}
 
-	// ---- title + zip the two columns ----
-	clock := now.Format("15:04")
-	var hr string
-	var hrW int
-	switch {
-	case !s.Connected:
-		hr, hrW = stWarn.Render("● disconnected"), DispW("● disconnected")
-	case !dData.IsZero() && now.Sub(dData) > workers.SilentAfter:
-		hr, hrW = stWarn.Render("● LUCI silent · "+clock), DispW("● LUCI silent · "+clock)
-	default:
-		hr, hrW = t.sAcc.Render("●")+t.sDim.Render(" "+clock), DispW("● "+clock)
+	right2 := section("audio", arows, rightW)
+	right2 = append(right2, "")
+	right2 = append(right2, section("resources", rrows, rightW)...)
+	if len(lrows) > 0 {
+		right2 = append(right2, "")
+		right2 = append(right2, section("latency", lrows, rightW)...)
 	}
-	content := []string{between(t.sAcc.Bold(true).Render("diagnostics"), DispW("diagnostics"), hr, hrW, W), ""}
-	gutter := "  " // 2-col gutter: cardWL + 2 + cardWR == W
-	blankR := strings.Repeat(" ", cardWR)
-	n := len(leftLines)
-	if len(rightLines) > n {
-		n = len(rightLines)
-	}
-	for i := 0; i < n; i++ {
-		l := strings.Repeat(" ", cardWL)
-		if i < len(leftLines) {
-			l = padVis(leftLines[i], cardWL)
+	right2 = append(right2, "")
+	right2 = append(right2, section("services", m.serviceStrip(innerR), rightW)...)
+
+	// ---- compose: the status line, a heavy rule, then the zipped columns ----
+	content := []string{masthead, t.sDmr.Render(strings.Repeat("━", W))}
+	gut := strings.Repeat(" ", gutter)
+	blankR := strings.Repeat(" ", rightW)
+	for i := 0; i < max(len(left2), len(right2)); i++ {
+		l := strings.Repeat(" ", leftW)
+		if i < len(left2) {
+			l = padVis(left2[i], leftW)
 		}
 		r := blankR
-		if i < len(rightLines) {
-			r = padVis(rightLines[i], cardWR)
+		if i < len(right2) {
+			r = padVis(right2[i], rightW)
 		}
-		content = append(content, l+gutter+r)
+		content = append(content, l+gut+r)
 	}
 
+	// footer + a small colour legend so the verdict/ribbon hues decode at a glance.
+	legend := t.sAcc.Render("●") + t.sDmr.Render(" good   ") + stWarn.Render("●") + t.sDmr.Render(" warn   ") + stRed.Render("●") + t.sDmr.Render(" fault")
 	var tail []string
 	if derr != "" {
 		tail = append(tail, stWarn.Render(Clip(GL["warn"]+" "+friendlyError(derr), W)), "")
 	}
-	tail = append(tail, t.sDmr.Render("live · any key returns to the dashboard"))
-	return strings.Join(frameBody(content, tail, m.rows-3, false), "\n")
+	foot := "live · any key returns to the dashboard"
+	tail = append(tail, between(t.sDmr.Render(foot), DispW(foot), legend, DispW("● good   ● warn   ● fault"), W))
+	return strings.Join(frameBody(content, tail, m.rows-2, false), "\n")
+}
+
+// ---- device capabilities + hardware (shown in the diagnostics overlay) -------
+//
+// "What can this box do, and what is it" — surfaced inside the `?` overlay rather
+// than a separate view, so the device identity is never shown twice. The
+// streaming-capability matrix is read live from the device (the one-shot @@c block
+// — running daemons via pidof, env-gated features via getenv — exposed by
+// ConfView); the hardware list encodes the model's verified, invariant facts (see
+// arylic-lp10-teardown.md). @@c rides the connect unconditionally, so the matrix is
+// already in hand whenever the overlay opens.
+
+// confServices is the capability matrix in display order — the LP10's *marketed*
+// streaming features only (the enabled four first, then the off-but-real rest).
+// LibreWireless reference-image baggage that this box doesn't actually offer
+// (Roon / Alexa / Matter / QPlay — installed but env-gated off, not on Arylic's
+// spec sheet; see teardown §13/§7.4) is deliberately omitted. id matches the @@c
+// wire key.
+var confServices = []struct{ id, label string }{
+	{"spotify", "Spotify"},
+	{"airplay", "AirPlay 2"},
+	{"dlna", "DLNA / UPnP"},
+	{"bt", "Bluetooth"},
+	{"cast", "Google Cast"},
+	{"tidal", "Tidal"},
+	{"qobuz", "Qobuz"},
+	{"usb", "USB playback"},
+}
+
+// confHardware is the invariant hardware reference for the LP10 (the one model this
+// tool targets), encoding the teardown's findings: a line-level streamer, no power
+// amp, WM8904 codec, optical S/PDIF up to 24-bit/192 kHz. The audio-chain and
+// compute facts only — live memory/link usage is the resources/network cards' job,
+// so nothing here repeats a live gauge.
+var confHardware = []struct{ k, v string }{
+	{"soc", "Amlogic A113L · 2× Cortex-A35"},
+	{"codec", "Wolfson WM8904 (DAC + ADC)"},
+	{"line out", "3.5 mm · 1 Vrms (no power amp)"},
+	{"optical", "S/PDIF TOSLINK ≤ 24-bit/192 kHz"},
+	{"line in", "3.5 mm aux → WM8904 ADC"},
+	{"radio", "dual-band 802.11ac · BT 5.0"},
+}
+
+// serviceStrip renders the capability matrix (from ConfView) as two dense grouped
+// rows — "on  ● a  ● b …" / "off ○ c  ○ d …" — plus the env-gating note. Compact (2-3
+// lines) for the diagnostics overlay's services section; degrades to a "reading…"
+// line until @@c arrives. The prefix column is 4 wide so the dots align.
+func (m *model) serviceStrip(w int) []string {
+	cv := m.st.ConfView()
+	if cv == nil {
+		return []string{m.clipStyled(m.sty.sDmr.Render("reading from device…"), w)}
+	}
+	var on, off []string
+	for _, sv := range confServices {
+		if cv.Svc[sv.id] == "on" {
+			on = append(on, m.sty.sAcc.Render("●")+" "+m.sty.sTxt.Render(sv.label))
+		} else {
+			off = append(off, m.sty.sDmr.Render("○")+" "+m.sty.sDim.Render(sv.label))
+		}
+	}
+	sep := "  "
+	rows := make([]string, 0, 3)
+	if len(on) > 0 {
+		rows = append(rows, m.sty.sDim.Render("on")+"  "+strings.Join(on, sep))
+	}
+	if len(off) > 0 {
+		rows = append(rows, m.sty.sDim.Render("off")+" "+strings.Join(off, sep))
+	}
+	rows = append(rows, m.sty.sDmr.Render("env-gated · toggle in the Arylic app"))
+	// Budget every row to w (visible cols): a narrow pane clips the dense on/off
+	// strip rather than sizing the bordered frame past the terminal width. (The
+	// cards path also re-clips via section(); clipStyled is a no-op when it fits.)
+	for i, r := range rows {
+		rows[i] = m.clipStyled(r, w)
+	}
+	return rows
 }
 
 // fmtKHz renders a sample rate in kHz: "44.1 kHz", "48 kHz", "96 kHz".
@@ -2368,10 +2576,16 @@ func (m *model) diagLine(label, value string) string {
 	return m.sty.sDim.Render(label) + labelGap(label, diagLabelW) + value
 }
 
-// diagGauge renders "label  [gauge]  value detail".
-func (m *model) diagGauge(label, gauge, value, detail string) string {
-	return m.sty.sDim.Render(label) + labelGap(label, diagLabelW) +
-		gauge + "  " + value + m.sty.sDmr.Render(detail)
+// diagGauge renders "label  [gauge]  value detail", clipping the dim detail to the
+// body width w so a long detail (e.g. the cpu load triplet at a narrow terminal)
+// can't size the row past the frame — the stacked counterpart to the cards cg()
+// detail clip. Pass detail="" for a gauge with no trailing note.
+func (m *model) diagGauge(label, gauge, value, detail string, w int) string {
+	row := m.sty.sDim.Render(label) + labelGap(label, diagLabelW) + gauge + "  " + value
+	if detail != "" {
+		row += m.sty.sDmr.Render(Clip(detail, w-lipgloss.Width(row))) // Clip("",<=0)→""
+	}
+	return m.clipStyled(row, w) // never exceed the body width (a no-op when it fits)
 }
 
 // eqReadout renders the compact EQ/tone summary line from the tunnel values.

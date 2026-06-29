@@ -1017,16 +1017,6 @@ func TestCov_boxArtAmbientFrame(t *testing.T) {
 // diagCard direct (defensive negative-bar) + latencyRow
 // ============================================================================
 
-func TestCov_diagCardNarrow(t *testing.T) {
-	m, _, _ := modelWith(protocol.NewState())
-	m.sty = newTheme()
-	// a title much wider than the card forces the negative-width bar branch to 0
-	out := m.diagCard(strings.Repeat("x", 40), []string{"row"}, 16)
-	if len(out) != 3 {
-		t.Errorf("diagCard should be header+row+footer, got %d lines", len(out))
-	}
-}
-
 // ============================================================================
 // renderDiag — Wi-Fi stacked and Wi-Fi cards, plus the short-pane trim
 // ============================================================================
@@ -1077,7 +1067,7 @@ func TestCov_renderDiagWifiCards(t *testing.T) {
 	m.rows, m.cols = 44, 120 // W = 114 >= diagCardsMinW -> cards
 	m.diag = true
 	out := clean(m.View())
-	for _, want := range []string{"╭─ network", "wi-fi", "ch 6", "2.4 GHz", "snr", "dns", "rate", "433 Mbit/s"} {
+	for _, want := range []string{"─ network", "wi-fi", "ch 6", "2.4 GHz", "snr", "dns", "rate", "433 Mbit/s"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wifi cards diag missing %q", want)
 		}
@@ -1297,15 +1287,6 @@ func TestCov_eqSliderRowTogglePadClamp(t *testing.T) {
 	_ = m.eqSliderRow(1, map[string]int{"EQS": 1}, false, 9)
 }
 
-func TestCov_diagCardTinyWidth(t *testing.T) {
-	m, _, _ := modelWith(protocol.NewState())
-	m.sty = newTheme()
-	// w below the frame overhead clamps the inner width to 1
-	if out := m.diagCard("t", []string{"r"}, 3); len(out) != 3 {
-		t.Errorf("diagCard tiny width lines = %d, want 3", len(out))
-	}
-}
-
 // ============================================================================
 // Rich diagnostics scenarios — Wi-Fi cards/stacked arms: muted volume, warn/red
 // health bands, buffer fill bands, latency spike, SNR vs link-quality detail,
@@ -1362,7 +1343,7 @@ func TestCov_diagRichCards(t *testing.T) {
 	m.rows, m.cols = 44, 120
 	m.diag = true
 	out := clean(m.View())
-	for _, want := range []string{"5 GHz", "ch 36", "snr", "MUTED", "2 ch", "mDNS", "live", "╭─ latency"} {
+	for _, want := range []string{"5 GHz", "ch 36", "snr", "muted", "2 ch", "mDNS", "live", "─ latency"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rich cards diag missing %q", want)
 		}
@@ -1470,7 +1451,7 @@ func TestCov_diagCardsMissingPing(t *testing.T) {
 	m.rows, m.cols = 44, 120
 	m.diag = true
 	out := clean(m.View())
-	if !strings.Contains(out, "╭─ latency") || !strings.Contains(out, "you") {
+	if !strings.Contains(out, "─ latency") || !strings.Contains(out, "you") {
 		t.Errorf("latency card should still show the 'you' row: %q", out)
 	}
 }

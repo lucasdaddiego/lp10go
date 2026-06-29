@@ -54,6 +54,19 @@ func TestKeychainPasswordOSErrorIsMarkedNotRaisedRaw(t *testing.T) {
 	}
 }
 
+// A clean exit (rc 0) with empty stdout is treated as no-item, not an empty
+// password — the platform-independent guard in KeychainPassword (secret-tool can
+// legitimately exit 0 with no output; security(1) wouldn't, but the guard is
+// defensive). The OS-specific exit-code/stderr classification is covered in the
+// per-OS test files; this pins the shared empty-output rule on every platform.
+func TestKeychainPasswordEmptyStdoutMeansNoItem(t *testing.T) {
+	withRunSecurity(t, func() secOutcome { return secOutcome{rc: 0, stdout: ""} })
+	_, err := KeychainPassword()
+	if err == nil || !strings.Contains(err.Error(), MarkerNoItem) {
+		t.Fatalf("err = %v, want %s", err, MarkerNoItem)
+	}
+}
+
 func TestAskpassFailureRoundtripsToFatalClass(t *testing.T) {
 	// marker-drift guard: whatever the askpass markers are, classify_stderr
 	// must map them to a fatal class.
@@ -79,9 +92,23 @@ func TestRemoteLoopIsValidShellAndWhitelistsMids(t *testing.T) {
 	if strings.Contains(body, "eval") {
 		t.Error("remote loop must not contain eval")
 	}
-	for _, tag := range []string{"@@B", "@@p", "@@t", "@@v", "@@s", "@@E"} {
+	for _, tag := range []string{"@@B", "@@p", "@@t", "@@v", "@@s", "@@i", "@@c", "@@E"} {
 		if !strings.Contains(body, tag) {
 			t.Errorf("missing wire tag %q", tag)
+		}
+	}
+	// the @@c capability block reads services read-only (pidof / getenv), never
+	// writes; pr/gv print "key=value" directly (one exec per service, no capturing
+	// subshell), so the keys are emitted at runtime rather than literal in the source.
+	for _, want := range []string{"echo @@c", "pr spotify ", "pr bt ", "gv cast ", "gv usb ", `echo "$1=on"`, "pidof", "getenv"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing @@c capability probe %q", want)
+		}
+	}
+	// LibreWireless reference-image baggage the LP10 doesn't market is not probed.
+	for _, absent := range []string{"alexa=", "matter=", "roon=", "AVSEnabled", "MatterEnabled", "RoonEnable"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("@@c should not probe non-marketed capability %q", absent)
 		}
 	}
 }
@@ -278,6 +305,30 @@ func TestRemoteLoopAudioChainParses(t *testing.T) {
 		if got := run(t, mk(t, c.pcms)); got != c.want {
 			t.Errorf("%s: parsed %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// TestRemoteLoopCapabilityProbeParses runs the @@c gather (the verbatim snippet
+// from the loop) under sh with pidof/getenv stubbed as shell functions, so a future
+// edit to that hand-written POSIX-sh fails here rather than silently on the device.
+// pr() keys off a running daemon (pidof), gv() off an env flag (getenv); both print
+// "key=value" directly — one exec per service, no capturing subshell.
+func TestRemoteLoopCapabilityProbeParses(t *testing.T) {
+	const snip = `gv() { v=$(getenv "$2" 2>/dev/null); case "$v" in 1|true|TRUE|True|on|ON|yes|YES) echo "$1=on";; '') echo "$1=";; *) echo "$1=off";; esac; }; pr() { if pidof "$2" >/dev/null 2>&1; then echo "$1=on"; else echo "$1=off"; fi; }; echo @@c; pr spotify newspotifyhifi; pr airplay airplaydemo; pr dlna dmr; pr bt bluetoothd; gv cast GoogleCast; gv tidal TidalEnabled; gv qobuz QobuzConnectEnabled; gv usb USBEnable; echo @@E`
+	if !strings.Contains(RemoteLoop("", "spotify.com"), snip) {
+		t.Fatal("capability-probe snippet not found verbatim in the loop")
+	}
+	// Stub the device binaries: spotify + bluetooth daemons running; getenv reports
+	// GoogleCast on (=1), Tidal off (=0), Qobuz unknown (empty -> ""), USB off.
+	const stub = `pidof() { case "$1" in newspotifyhifi|bluetoothd) return 0;; *) return 1;; esac; }; ` +
+		`getenv() { case "$1" in GoogleCast) echo 1;; TidalEnabled) echo 0;; USBEnable) echo off;; esac; }; `
+	out, err := exec.Command("sh", "-c", stub+snip).Output()
+	if err != nil {
+		t.Fatalf("sh: %v", err)
+	}
+	const want = "@@c\nspotify=on\nairplay=off\ndlna=off\nbt=on\ncast=on\ntidal=off\nqobuz=\nusb=off\n@@E\n"
+	if string(out) != want {
+		t.Errorf("capability probe output:\n%q\nwant:\n%q", string(out), want)
 	}
 }
 

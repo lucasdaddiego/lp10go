@@ -615,6 +615,72 @@ func TestDevInfoWifiPath(t *testing.T) {
 	}
 }
 
+func TestConfInfoCapabilities(t *testing.T) {
+	st := NewState()
+	if st.ConfView() != nil {
+		t.Fatal("ConfView should be nil before any @@c block")
+	}
+	// Includes alexa/roon/matter (LibreWireless baggage the controller no longer
+	// reads) and a bogus key — all must be dropped, leaving only the 8 marketed ones.
+	feed := "@@c\nspotify=on\nairplay=on\ndlna=on\nbt=on\ncast=off\ntidal=off\n" +
+		"qobuz=off\nusb=off\nroon=off\nalexa=off\nmatter=off\nbogus=on\n@@E\n"
+	for _, rec := range recordsFrom(splitLines(feed)) {
+		ApplyRecord(st, rec)
+	}
+	cv := st.ConfView()
+	if cv == nil {
+		t.Fatal("ConfView nil after @@c block")
+	}
+	if cv.Svc["spotify"] != "on" || cv.Svc["bt"] != "on" || cv.Svc["cast"] != "off" || cv.Svc["usb"] != "off" {
+		t.Errorf("capability states wrong: %+v", cv.Svc)
+	}
+	for _, dropped := range []string{"bogus", "alexa", "roon", "matter"} {
+		if _, ok := cv.Svc[dropped]; ok {
+			t.Errorf("non-allowlisted capability %q must be dropped at the parse boundary", dropped)
+		}
+	}
+	if len(cv.Svc) != 8 {
+		t.Errorf("want the 8 allowlisted services, got %d: %+v", len(cv.Svc), cv.Svc)
+	}
+	// An empty value (the device couldn't read the flag) parses as "" (unknown),
+	// not dropped — so the view can distinguish "off" from "not yet known".
+	for _, rec := range recordsFrom(splitLines("@@c\nspotify=\n@@E\n")) {
+		ApplyRecord(st, rec)
+	}
+	if cv := st.ConfView(); cv == nil {
+		t.Fatal("ConfView nil after second @@c")
+	} else if v, ok := cv.Svc["spotify"]; !ok || v != "" {
+		t.Errorf("empty capability value should parse as unknown, got (%q, %v)", v, ok)
+	}
+}
+
+// A malformed @@c line with no '=' is skipped at the parse boundary (the
+// strings.Cut ok==false branch), a duplicate key takes the last value, and
+// surrounding valid keys are unaffected — no panic.
+func TestConfInfoMalformedAndDuplicateLines(t *testing.T) {
+	st := NewState()
+	feed := "@@c\ngarbage-no-equals\nspotify=on\nspotify=off\nbt=on\n@@E\n"
+	for _, rec := range recordsFrom(splitLines(feed)) {
+		ApplyRecord(st, rec)
+	}
+	cv := st.ConfView()
+	if cv == nil {
+		t.Fatal("ConfView nil after @@c block")
+	}
+	if v, ok := cv.Svc["spotify"]; !ok || v != "off" {
+		t.Errorf("duplicate key should take the last value: got (%q, %v), want (off, true)", v, ok)
+	}
+	if cv.Svc["bt"] != "on" {
+		t.Errorf("a valid key after a junk line should still parse: bt=%q", cv.Svc["bt"])
+	}
+	if _, ok := cv.Svc["garbage-no-equals"]; ok {
+		t.Error("a line with no '=' must be skipped, not stored")
+	}
+	if len(cv.Svc) != 2 { // spotify + bt only
+		t.Errorf("want 2 parsed keys (spotify, bt), got %d: %+v", len(cv.Svc), cv.Svc)
+	}
+}
+
 func TestNetThroughputAndLatency(t *testing.T) {
 	st := NewState()
 	t0 := time.Now()

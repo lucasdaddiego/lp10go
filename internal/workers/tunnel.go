@@ -97,9 +97,12 @@ func tunnelOnce(st *protocol.State, cfg config.Config, eqcmds <-chan EQCommand, 
 		st.Stop.Wait(tunnelSeedSpacing)
 	}
 
-	// Write loop: drain queued commands until the connection dies or we stop.
-	// The periodic wake lets us notice Stop even with no commands in flight.
+	// Write loop: drain queued commands until the connection dies or we stop. One
+	// ticker (not a fresh time.After each iteration) gives the periodic wake that
+	// lets us notice Stop with no commands in flight, without churning timers.
 	dead := false
+	poll := time.NewTicker(tunnelPoll)
+	defer poll.Stop()
 	for !st.Stop.IsSet() && !dead {
 		select {
 		case <-done:
@@ -108,7 +111,7 @@ func tunnelOnce(st *protocol.State, cfg config.Config, eqcmds <-chan EQCommand, 
 			if _, werr := conn.Write([]byte(tunnel.Set(cmd.Code, cmd.Val))); werr != nil {
 				dead = true
 			}
-		case <-time.After(tunnelPoll):
+		case <-poll.C:
 		}
 	}
 

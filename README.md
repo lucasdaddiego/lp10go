@@ -13,7 +13,6 @@
 ```
 $ lp10
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                              ┃
 ┃  ♪ LP10 · Living  ● 15:42           Spotify · audio/ogg · 44.1 kHz    Vol    ┃
 ┃                                                                              ┃
 ┃                                                                              ┃
@@ -69,15 +68,21 @@ app, no browser, no background daemon: run `lp10`, get one screen.
 - **Graphic equalizer** — the EQ switch and treble / mid / bass tone, a deep-bass
   switch and level, and the output cap (Max Volume) — driven over the device's
   own control channel. Paints instantly from a cached snapshot on launch.
-- **Diagnostics overlay** (`?`) — a two-column card grid on a wide terminal (a
-  stacked read-out when narrow): device & firmware; the active network link (Wi-Fi
-  or ethernet, with live throughput, Wi-Fi **SNR**, and round-trip latency — jitter,
-  peak, and a rolling sparkline — to your laptop, the gateway, and the internet);
+- **Diagnostics overlay** (`?`) — a one-line **status band**: a health verdict
+  (`healthy` / `warn` / `fault`) plus the key live vitals (temp · cpu · mem · buffer),
+  color-coded, over two ruled columns on a wide terminal (a stacked read-out when
+  narrow): device & firmware; the
+  active network link (Wi-Fi or ethernet, with live throughput, Wi-Fi **SNR**, and
+  round-trip latency — jitter, peak, and a rolling sparkline — to your laptop, the
+  gateway, and the internet);
   the **audio chain** (ALSA playback state, the **buffer fill**, and the DAC's
   *actual* rate/format/channels vs the source — catching resampling); and resource
-  gauges (cpu + clock · memory · temp · process contention · data). Gathered on the
-  device **only while the overlay is open**; any metric the hardware can't provide
-  degrades to "—".
+  gauges (cpu + clock · memory · temp · process contention · data). It also lists the
+  device's **streaming capabilities** (Spotify · AirPlay 2 · DLNA · Bluetooth on,
+  with Cast / Tidal / Qobuz / USB shown off when env-gated — read live from the box)
+  and a **hardware reference** (SoC, WM8904 codec, the line-out / optical outputs).
+  The live metrics are gathered **only while the overlay is open**; any metric the
+  hardware can't provide degrades to "—".
 - **Finds the device itself** — mDNS auto-discovery at startup locates the LP10 on
   the LAN by its `am=LP10` advertisement, so a changed DHCP lease never needs a
   config edit. Pure mDNS (no dependency, no bound port); falls back to the
@@ -178,47 +183,72 @@ playback, and the last-known values are restored instantly from cache on launch.
 
 ## Diagnostics
 
-Press `?` for a full read-out of the device, connection, and link health — the
-two-column card grid on a wide terminal (it collapses to a single stacked column
-when narrow):
+Press `?` for a full read-out of the device, connection, and link health. A one-line
+**status band** answers "is the LP10 OK?" in a glance — a health verdict beside the
+title and the key live vitals, color-coded — over two boxless, ruled columns (identity
+left, live right; it collapses to a single stacked column when narrow):
 
 ```
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  diagnostics   ● healthy   temp 49 °C · cpu 23% · mem 39% · buffer 78%                                      ● 16:40  ┃
+┃  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ┃
+┃  ─ device ───────────────────────────────────────    ─ audio ──────────────────────────────────────────────────────  ┃
+┃    host      root@192.168.1.13 · mDNS                  stream    audio/ogg · 44.1 kHz                                ┃
+┃    device    Arylic AR241CE · LS8                      dac       44.1 kHz · S16_LE · 2ch ● live                      ┃
+┃    os        Linux 5.15.137 · 2 cores                  buffer    ━━━━━━━━━───  78% ring                              ┃
+┃    firmware  AR241CE_9243.16                           volume    ━━━━━───────  44%                                   ┃
+┃    build     2025-12-24 · app 312                      eq        EQ on · T +3 · Max Vol 100                          ┃
+┃    uptime    5d 3h 16m                                                                                               ┃
+┃    mac       aa:bb:cc:dd:ee:ff                       ─ resources ──────────────────────────────────────────────────  ┃
+┃                                                        cpu       ━━━─────────  23% 1m 0.46 · 1200 MHz                ┃
+┃  ─ network ──────────────────────────────────────      tasks     1 running · 234 total                               ┃
+┃    link      ethernet · 100 Mbit/s · full duplex       memory    ━━━━━───────  39% 131/215 MB free                   ┃
+┃    address   192.168.1.13 · gw 192.168.1.1             temp      ━━━━━━━─────  49 °C SoC                             ┃
+┃    dns       192.168.1.1                               data      ━━──────────  17% 1228/7168 MB /lsync               ┃
+┃    traffic   rx 0 B/s · tx 0 B/s                                                                                     ┃
+┃    player    ssh · rx 0.0s ago · 0 attempts          ─ latency ────────────────────────────────────────────────────  ┃
+┃    control   tunnel :2018 · live                       you    2.3ms ±0.4  ▁▁▂▁▄▂▁▃▁▂▁                                ┃
+┃                                                        gw      12ms ±5.2  ▄▁▂▆▁▃▂▃▁▄▁                                ┃
+┃  ─ hardware ─────────────────────────────────────      net     29ms ±9.5  ▂▁▁▁▆▁▁▁▁▂▁                                ┃
+┃    soc       Amlogic A113L · 2× Cortex-A35                                                                           ┃
+┃    codec     Wolfson WM8904 (DAC + ADC)              ─ services ───────────────────────────────────────────────────  ┃
+┃    line out  3.5 mm · 1 Vrms (no power amp)            on  ● Spotify  ● AirPlay 2  ● DLNA / UPnP  ● Bluetooth        ┃
+┃    optical   S/PDIF TOSLINK ≤ 24-bit/192 kHz           off ○ Google Cast  ○ Tidal  ○ Qobuz  ○ USB playback           ┃
+┃    line in   3.5 mm aux → WM8904 ADC                   env-gated · toggle in the Arylic app                          ┃
+┃    radio     dual-band 802.11ac · BT 5.0                                                                             ┃
 ┃                                                                                                                      ┃
-┃  diagnostics                                                                                                ● 16:40  ┃
-┃                                                                                                                      ┃
-┃  ╭─ device ─────────────────────────────────────────────╮  ╭─ audio ──────────────────────────────────────────────╮  ┃
-┃  │ host      root@192.168.1.13                          │  │ stream    audio/ogg · 44.1 kHz                       │  ┃
-┃  │ device    Arylic AR241CE · LS8                       │  │ dac       44.1 kHz · S16_LE · 2ch ● live             │  ┃
-┃  │ os        Linux 5.15.137 · 2 cores                   │  │ buffer    ━━━━━━━━━───  78% ring                     │  ┃
-┃  │ firmware  AR241CE_9243.16                            │  │ volume    ━━━━━───────  44%                          │  ┃
-┃  │ build     2025-12-24 · app 312                       │  │ eq        EQ on · T +3 · M 0 · B +3 · Sub on 15 · M… │  ┃
-┃  │ uptime    3h 25m                                     │  ╰──────────────────────────────────────────────────────╯  ┃
-┃  │ mac       aa:bb:cc:dd:ee:ff                          │  ╭─ resources ──────────────────────────────────────────╮  ┃
-┃  ╰──────────────────────────────────────────────────────╯  │ cpu       ━━━─────────  26% 1m 0.51 · 1200 MHz       │  ┃
-┃  ╭─ connection ─────────────────────────────────────────╮  │ tasks     2 running · 237 total                      │  ┃
-┃  │ player    ssh · rx 0.0s ago · 1 attempt              │  │ memory    ━━━━────────  37% 135/215 MB free          │  ┃
-┃  │ control   tunnel :2018 · live                        │  │ temp      ━━━━━━━─────  52 °C SoC                    │  ┃
-┃  ╰──────────────────────────────────────────────────────╯  │ data      ━━──────────  17% 1228/7168 MB /lsync      │  ┃
-┃  ╭─ network ────────────────────────────────────────────╮  ╰──────────────────────────────────────────────────────╯  ┃
-┃  │ link      ethernet · 100 Mbit/s · full duplex        │  ╭─ latency ────────────────────────────────────────────╮  ┃
-┃  │ address   192.168.1.13 · gw 192.168.1.1              │  │ you       11ms ±6.6  ▁▂▁█▃▁▂▁▁▂▁█▃▁▂▁▁▂▁▂▁▁▂▁█▃▁▂    │  ┃
-┃  │ dns       192.168.1.1                                │  │ gw       6.6ms ±1.1  ▁▁▂▁▁▁▂▁▁▁▁▁▂▁▁▁▁▂▁▁▁▂▁▁▁▁▁▂    │  ┃
-┃  │ traffic   rx 0 B/s · tx 0 B/s                        │  │ spotify   25ms ±2.0  ▂▃▂▂▃▂▂▃▂▂▂▃▂▂▃▂▂▃▂▂▃▂▂▃▂▂▃▂    │  ┃
-┃  ╰──────────────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯  ┃
-┃                                                                                                                      ┃
-┃  live · any key returns to the dashboard                                                                             ┃
+┃  live · any key returns to the dashboard                                                  ● good   ● warn   ● fault  ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ```
+
+A single **status line** carries a one-glance **health verdict** (`healthy` / `warn` /
+`fault`) — the worst of the live signals (cpu · memory · temp · `/lsync` · buffer · link
+freshness), color-coded and word-paired so it still reads on a no-color terminal —
+followed by the key live vitals (temp · cpu · mem · buffer), each tinted by its own
+health, with the connection light + clock on the right. (Buffer reads `idle` when
+nothing's playing. Volume and latency aren't vitals — they're settings/links, with their
+own gauge in the audio section and rows in the latency section, so they're not
+duplicated up top.)
+
+The left column is the static picture of the box — **device** identity, the **network**
+it's on (and lp10's own ssh / `:2018` link to it), and a **hardware** reference (SoC,
+WM8904 codec, the line-out / optical outputs) encoded from a full teardown of the unit.
+The right column is the live half: **audio** chain, **resources**, **latency**, and the
+**services** the box offers.
+
+The **services** matrix is read live from the device (a one-shot read at connect): a
+`pidof` for the running daemons (Spotify / AirPlay / DLNA / Bluetooth) and a `getenv`
+for the marketed-but-disabled features (Cast / Tidal / Qobuz / USB). Capabilities the
+LP10 doesn't actually offer — Roon / Alexa / Matter, LibreWireless firmware baggage
+that's never on the spec sheet — are not shown; toggle the rest in the device's own
+setup (the Arylic / 4STREAM app), not here.
 
 The resource gauges and the network stats (throughput, Wi-Fi signal, and the three
 ping round-trips) are collected on the device **only while this overlay is open** —
 close it and the on-device loop drops back to the bare minimum. Each latency row
-keeps a rolling ~30s sparkline and a peak, so an intermittent spike (a powerline
-link dropping out, say) is visible after the fact — that window spans only the
-current viewing, since nothing is gathered with the overlay closed. The internet-ping
-target is the `ping_host` config key (default `spotify.com`). Any key returns to the
-dashboard.
+keeps a rolling ~30s sparkline and a peak, so an intermittent spike (a powerline link
+dropping out, say) is visible after the fact. The internet-ping target is the
+`ping_host` config key (default `spotify.com`). Any key returns to the dashboard.
 
 ## How it works
 

@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -12,6 +13,47 @@ import (
 	"github.com/lucasdaddiego/lp10/internal/artwork"
 	"github.com/lucasdaddiego/lp10/internal/protocol"
 )
+
+// A cover renders at its true aspect ratio — not stretched to a square box: the art
+// block's cell footprint tracks the source shape (a square stays square in display;
+// a 2:1 source renders visibly wider). Regression for the stretched-disc fix.
+func TestCoverAspectNotStretched(t *testing.T) {
+	const url = "https://i.scdn.co/image/0000000000000000000000000000000000000000" // playing_record's cover
+	mk := func(w, h int) image.Image {
+		im := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				im.Set(x, y, color.RGBA{180, 180, 180, 255})
+			}
+		}
+		return im
+	}
+	box := func(srcW, srcH int) (w, h int) {
+		st := protocol.NewState()
+		protocol.ApplyRecord(st, playingRecord())
+		st.SetArt(url, mk(srcW, srcH), color.RGBA{}, false)
+		m, _, _ := modelWith(st)
+		m.sty = newTheme()
+		m.sty.trueColor = true
+		m.cfg.Art, m.cfg.ArtMode = true, "halfblock"
+		m.rows, m.cols, m.cellW, m.cellH = 34, 120, 10, 20 // measured 2:1 cells
+		for _, ln := range strings.Split(m.renderDashboard(st.Snap(), time.Time{}, 114, true), "\n") {
+			if c := strings.Count(stripANSI(ln), "▀"); c > 0 {
+				h++
+				if c > w {
+					w = c
+				}
+			}
+		}
+		return
+	}
+	if w, h := box(600, 600); h == 0 || w != 2*h { // 2:1 cells: a square display is 2× as many cols as rows
+		t.Errorf("square cover should be square in display, got %d×%d cells", w, h)
+	}
+	if w, h := box(800, 400); h == 0 || w <= 2*h { // a 2:1 cover must render wider than a square would
+		t.Errorf("a 2:1 cover should render wider than tall, got %d×%d cells", w, h)
+	}
+}
 
 func TestArtChoiceResolution(t *testing.T) {
 	cases := []struct {

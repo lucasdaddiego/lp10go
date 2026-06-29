@@ -1,0 +1,10 @@
+@@c
+spotify=on
+airplay=on
+dlna=on
+bt=on
+cast=off
+tidal=off
+qobuz=off
+usb=off
+@@E

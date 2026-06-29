@@ -161,7 +161,14 @@ func fit(img image.Image, minPx, maxPx int) image.Image {
 	if long == 0 || target == long {
 		return img
 	}
-	return downscale(img, b.Dx()*target/long, b.Dy()*target/long)
+	w, h := b.Dx()*target/long, b.Dy()*target/long
+	// Match sizeForPlacement's direction split (and this function's own doc): a
+	// sub-minPx cover is ENLARGED with bilinear resampling — box averaging would
+	// degenerate to a blocky nearest-neighbour pick when upscaling.
+	if target > long {
+		return resample(img, w, h)
+	}
+	return downscale(img, w, h)
 }
 
 // resample scales src to w×h by bilinear interpolation — smooth for the

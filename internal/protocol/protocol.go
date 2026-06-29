@@ -33,8 +33,9 @@ var (
 )
 
 // tags is the set of section letters a record may carry. 'i' is the one-shot
-// static device/network info block (key=value lines) sent once per connection.
-var tags = map[byte]bool{'B': true, 'p': true, 't': true, 'v': true, 's': true, 'i': true}
+// static device/network info block and 'c' the one-shot capability/config block
+// (both key=value lines), each sent once per connection.
+var tags = map[byte]bool{'B': true, 'p': true, 't': true, 'v': true, 's': true, 'i': true, 'c': true}
 
 const maxRecLines = 200 // a legitimate record is ~30 lines
 
@@ -141,6 +142,24 @@ type DevInfo struct {
 	Build, App, Platform string
 	DataUsed, DataTotal  string // /lsync (data partition), KB
 	DNS                  string // configured resolver (first nameserver); "" when absent
+}
+
+// confKeys is the allowlist of capability ids the one-shot @@c block may carry;
+// any other key is dropped at the parse boundary (mirroring DevInfo's whitelist).
+// The values are "on" / "off" / "" (unknown) — see the @@c emitter in
+// transport.remoteLoopA.
+var confKeys = map[string]bool{
+	"spotify": true, "airplay": true, "dlna": true, "bt": true,
+	"cast": true, "tidal": true, "qobuz": true, "usb": true,
+}
+
+// ConfInfo holds the device's streaming-capability state from the one-shot @@c
+// section, refreshed once per connection. Svc maps a capability id (see confKeys)
+// to "on" (env-enabled / daemon running), "off", or "" (unknown — the device
+// couldn't read the flag). It feeds the config view; it carries no live metrics,
+// so unlike @@s it is gathered unconditionally at connect, not gated on an overlay.
+type ConfInfo struct {
+	Svc map[string]string
 }
 
 // PingStat is one latency target's rolling readout in milliseconds: the average,
@@ -464,6 +483,17 @@ func ApplyRecord(st *State, rec Record) {
 		devinfo = di
 	}
 
+	var confinfo *ConfInfo
+	if lines := rec["c"]; len(lines) > 0 {
+		ci := &ConfInfo{Svc: make(map[string]string, len(confKeys))}
+		for _, ln := range lines {
+			if k, v, ok := strings.Cut(printable(ln), "="); ok && confKeys[k] {
+				ci.Svc[k] = v
+			}
+		}
+		confinfo = ci
+	}
+
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.lastRx = now
@@ -473,6 +503,9 @@ func ApplyRecord(st *State, rec Record) {
 	}
 	if devinfo != nil {
 		st.devinfo = devinfo
+	}
+	if confinfo != nil {
+		st.confinfo = confinfo
 	}
 	if hasB {
 		switch {
@@ -609,7 +642,8 @@ type State struct {
 	trackAt   time.Time
 	lastTrack Track // survives idle, feeds the idle screen
 	sysinfo   *SysInfo
-	devinfo   *DevInfo // static device/network info (@@i, once per connection)
+	devinfo   *DevInfo  // static device/network info (@@i, once per connection)
+	confinfo  *ConfInfo // streaming-capability state (@@c, once per connection)
 
 	posMs    int
 	posAt    time.Time
@@ -970,6 +1004,16 @@ func (st *State) DevInfoView() *DevInfo {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.devinfo
+}
+
+// ConfView returns the streaming-capability state (or nil before the first @@c
+// block arrives). The returned ConfInfo is owned by the caller's read: the worker
+// only ever replaces st.confinfo wholesale (never mutates a published map), so the
+// map is safe to range without copying.
+func (st *State) ConfView() *ConfInfo {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.confinfo
 }
 
 // pingRingMax bounds each latency ring. The device samples latency on every 3rd
