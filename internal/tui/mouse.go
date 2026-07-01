@@ -3,6 +3,7 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/lucasdaddiego/lp10/internal/protocol"
 	"github.com/lucasdaddiego/lp10/internal/tunnel"
 )
 
@@ -157,4 +158,95 @@ func (m *model) handleMouse(e tea.MouseMsg) {
 			}
 		}
 	}
+}
+
+// ---- hit-zone recorders (the render-side counterpart of handleMouse) ----
+
+// recordFullZones records the transport, volume-rail, and EQ-band hit-zones for
+// the full dashboard, in absolute terminal coordinates. It mirrors the geometry
+// of renderDashboard's full branch: the block is vertically centred by stack
+// between a two-line top ([header, ""]) and the bottom tail, and the bottom tail
+// (EQ sliders + footer) is pinned to the inner region's foot.
+func (m *model) recordFullZones(coverW, midW, blockH, midLen, tailLen, inner, W int) {
+	// stack's middle region (below [header,""], above tail)
+	region := max(inner-2-tailLen, 0)
+	// stack clips the block to the region if it overflows
+	middleLen := min(blockH, region)
+	blockTop := bodyY0 + 2 + (region-middleLen)/2 // 2 = the [header, ""] top rows
+
+	// Transport buttons: the last line of the now-playing block, which frameBody
+	// centres in the blockH-tall column (top = (blockH-midLen)/2 when it fits) — so
+	// the zone tracks exactly where transportSegments was drawn.
+	midTop := 0
+	if midLen < blockH {
+		midTop = (blockH - midLen) / 2
+	}
+	if row := midTop + midLen - 1; row >= 0 && row < middleLen { // visible (not clipped)
+		pad, widths, gap := transportLayout(midW)
+		x := bodyX0 + coverW + 2 + artGap + pad
+		y := blockTop + row
+		for i, a := range actions {
+			m.mzBtns = append(m.mzBtns, btnZone{rect{x, y, widths[i], 1}, a, i})
+			x += widths[i] + gap // skip the inter-button gap
+		}
+	}
+
+	// Volume rail: the bar squares (volRail draws blockH-1 of them, then a value
+	// row that isn't part of the zone).
+	if h := blockH - 1; h > 0 {
+		if h > middleLen {
+			h = middleLen
+		}
+		if h > 0 {
+			volX := bodyX0 + coverW + 2 + artGap + midW + artGap
+			m.mzVol = volZone{rect{volX, blockTop, volColW, h}, true}
+		}
+	}
+
+	// EQ rows in the bottom tail. tail = [divider, band0, …, band6, footer, errLine?];
+	// bands start one line in (immediately after the divider).
+	eqTop := bodyY0 + inner - tailLen + 1
+	trackW := max(W-sliderLabelW-sliderValW, 1)
+	for d := range eqOrder {
+		sp := tunnel.Specs[eqOrder[d]]
+		y := eqTop + d
+		m.mzEQ = append(m.mzEQ, eqZone{
+			rect:   rect{bodyX0, y, W, 1},
+			bar:    rect{bodyX0 + sliderLabelW, y, trackW, 1},
+			d:      d,
+			code:   sp.Code,
+			toggle: sp.Kind == tunnel.Toggle,
+			min:    sp.Min,
+			max:    sp.Max,
+		})
+	}
+}
+
+// recordCompactZones records the transport + mute button hit-zones for the
+// compact dashboard. The content is top-pinned (frameBody, no centring), so the
+// controls row sits a fixed offset below the header; volume is left to the wheel.
+func (m *model) recordCompactZones(s protocol.Snapshot, metaLen, tailLen, inner, W int) {
+	row := metaLen + 5 // [header, "", meta…, "", seek, "", controls]
+	if row >= inner-tailLen {
+		return // clipped off by the pinned tail
+	}
+	y := bodyY0 + row
+	// Mirror controlsRow's button widths exactly (toggleVerb + btn's 2-col padding).
+	pvW, tgW, nxW := DispW(GL["rew"])+2, DispW(toggleVerb(s))+2, DispW(GL["ff"])+2
+	x := bodyX0
+	for _, b := range []struct {
+		action string
+		w, idx int
+	}{{"prev", pvW, 0}, {"toggle", tgW, 1}, {"next", nxW, 2}} {
+		m.mzBtns = append(m.mzBtns, btnZone{rect{x, y, b.w, 1}, b.action, b.idx})
+		x += b.w + 1 // a single space separates the buttons
+	}
+	// The mute button is the last element of the right-aligned cluster, so it
+	// occupies the final mtW columns regardless of the volume value's width.
+	muteLbl := "mute"
+	if s.Muted {
+		muteLbl = "unmute"
+	}
+	mtW := DispW(muteLbl) + 2
+	m.mzBtns = append(m.mzBtns, btnZone{rect{bodyX0 + W - mtW, y, mtW, 1}, "mute", -1})
 }

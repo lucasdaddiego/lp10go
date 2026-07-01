@@ -123,12 +123,7 @@ func sizeForPlacement(img image.Image, pxW, pxH int) image.Image {
 	if dh < 1 {
 		dh = 1
 	}
-	var scaled *image.RGBA
-	if scale > 1 {
-		scaled = resample(img, dw, dh) // bilinear: smooth enlargement
-	} else {
-		scaled = downscale(img, dw, dh) // box average: clean reduction
-	}
+	scaled := resize(img, dw, dh, scale > 1)
 	if dw >= pxW && dh >= pxH {
 		return scaled // already fills the footprint, no margin needed
 	}
@@ -153,13 +148,20 @@ func fit(img image.Image, minPx, maxPx int) image.Image {
 		return img
 	}
 	w, h := b.Dx()*target/long, b.Dy()*target/long
-	// Match sizeForPlacement's direction split (and this function's own doc): a
-	// sub-minPx cover is ENLARGED with bilinear resampling — box averaging would
-	// degenerate to a blocky nearest-neighbour pick when upscaling.
-	if target > long {
-		return resample(img, w, h)
+	return resize(img, w, h, target > long)
+}
+
+// resize scales src to w×h with the kernel picked by direction: bilinear when
+// enlarging (box averaging would degenerate to a blocky nearest-neighbour
+// pick), box averaging when shrinking (bilinear would alias detail away).
+// enlarging is the caller's own scale test — the call sites derive it from
+// different math (a float scale factor vs integer edge targets), so the
+// decision stays at the site and only the kernel choice is shared.
+func resize(src image.Image, w, h int, enlarging bool) *image.RGBA {
+	if enlarging {
+		return resample(src, w, h)
 	}
-	return downscale(img, w, h)
+	return downscale(src, w, h)
 }
 
 // resample scales src to w×h by bilinear interpolation — smooth for the

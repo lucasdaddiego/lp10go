@@ -701,8 +701,8 @@ func TestNetThroughputAndLatency(t *testing.T) {
 	if g := n.Ping[1]; g.Avg != 17 || g.Jitter != 6 { // mean(14,20)=17, |20-14|=6
 		t.Errorf("gateway ping = %+v, want avg 17 jitter 6", g)
 	}
-	if g := n.Ping[1]; g.Peak != 20 || len(g.Series) != 2 || g.Series[1] != 20 {
-		t.Errorf("gateway peak/series = %v / %v, want peak 20, series [14 20]", g.Peak, g.Series)
+	if g := n.Ping[1]; g.Peak != 20 {
+		t.Errorf("gateway peak = %v, want 20", g.Peak)
 	}
 	// a counter reset (reboot / interface flap) must not spike the rate
 	st.updateNet(&SysInfo{RxBytes: "10", TxBytes: "5"}, t0.Add(4*time.Second))

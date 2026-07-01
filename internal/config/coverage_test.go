@@ -179,23 +179,6 @@ func TestCov_ArtCacheDirMkdirFails(t *testing.T) {
 	}
 }
 
-// TestCov_AtomicWriteRenameOntoDirFails covers the rename-failure branch of
-// atomicWrite: renaming the .tmp file onto an existing directory fails, and the
-// .tmp sibling is cleaned up.
-func TestCov_AtomicWriteRenameOntoDirFails(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "target")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	atomicWrite(dir, "data") // rename(tmp, dir) fails because dir is a directory
-	if _, err := os.Stat(dir + ".tmp"); err == nil {
-		t.Error(".tmp should be removed after a failed rename")
-	}
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		t.Error("target should still be a directory after the failed write")
-	}
-}
-
 // TestCov_LoadPremuteNonNumeric covers the Atoi-failure branch: non-numeric
 // file content defaults to 30.
 func TestCov_LoadPremuteNonNumeric(t *testing.T) {

@@ -39,18 +39,16 @@ func glyphs(amb int) map[string]string {
 	if amb == 2 {
 		return map[string]string{
 			"play": ">", "pause": "#", "rew": "<<", "ff": ">>", "note": "*", "warn": "!",
-			"fill": "=", "half": "=", "track": "-",
-			"gl": "[", "gr": "]", "gfull": "#", "gempty": ".",
+			"fill": "=", "track": "-",
 			"tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|",
-			"rep": "R", "shuf": "S", "cursor": "|", "ell": "...",
+			"ell": "...",
 		}
 	}
 	return map[string]string{
 		"play": "▶", "pause": "⏸", "rew": "◀◀", "ff": "▶▶", "note": "♪", "warn": "⚠",
-		"fill": "━", "half": "╸", "track": "─",
-		"gl": "▕", "gr": "▏", "gfull": "█", "gempty": "░",
+		"fill": "━", "track": "─",
 		"tl": "╭", "tr": "╮", "bl": "╰", "br": "╯", "h": "─", "v": "│",
-		"rep": "⟳", "shuf": "⇄", "cursor": "▏", "ell": "…",
+		"ell": "…",
 	}
 }
 
@@ -216,4 +214,28 @@ func Quality(t protocol.Track) string {
 		bits = append(bits, strconv.FormatFloat(float64(sr)/1000, 'g', -1, 64)+" kHz")
 	}
 	return strings.Join(bits, " · ")
+}
+
+// friendlyError condenses a raw ssh / network error into a short, calm line for
+// the UI. The raw stderr (e.g. "ssh: Could not resolve hostname lp10.local:
+// nodename nor servname provided, or not known") is accurate but long and
+// alarming; these map the common cases to something human and actionable, and at
+// worst just drop the "ssh:" prefix.
+func friendlyError(msg string) string {
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "could not resolve") || strings.Contains(low, "name or service not known"):
+		return "can't find the device — are you on the home network?"
+	case strings.Contains(low, "no route to host") || strings.Contains(low, "network is unreachable"):
+		return "no route to the device — check the network"
+	case strings.Contains(low, "connection refused"):
+		return "the device refused the connection"
+	case strings.Contains(low, "timed out") || strings.Contains(low, "timeout"):
+		return "connection timed out — the device may be off or away"
+	case strings.Contains(low, "permission denied") || strings.Contains(low, "publickey"):
+		return "ssh authentication failed"
+	case strings.HasPrefix(low, "ssh: "):
+		return strings.TrimSpace(msg[5:])
+	}
+	return msg
 }

@@ -218,9 +218,16 @@ func TestRemoteLoopParsesDeviceOutput(t *testing.T) {
 func TestRemoteLoopStructuralContract(t *testing.T) {
 	body := RemoteLoop("", "spotify.com")
 	for _, want := range []string{
-		// the positional @@s line (now with the audio-chain / cpu-clock / proc-count
-		// tail appended at the END so older parsers and fixtures stay compatible)
-		`echo "$up $la $lb $lc $ma $mt $nc $fw.$fv $kt-$kr ${tp:--} ${rxb:--} ${txb:--} $sg $lq $pcl $pgw $pnt ${as:--} ${ab:--} ${ar:--} ${af:--} ${ac:--} ${bs:--} ${cf:--} ${r1:--} ${ns:--}"`,
+		// the positional @@s line (new fields are appended at the END so older
+		// parsers and fixtures stay compatible; order is also cross-checked by
+		// protocol's TestSysStatsFieldOrder)
+		`echo "$up $la $lb $lc $ma $mt $nc $fw.$fv $kt-$kr ${tp:--} ${rxb:--} ${txb:--} $sg $lq $pcl $pgw $pnt ${as:--} ${ab:--} ${ar:--} ${af:--} ${ac:--} ${bs:--} ${cf:--} ${r1:--} ${ns:--} ${rxe:--} ${txe:--} ${rxd:--} ${txd:--}"`,
+		// the one-shot raw register ships (device details + multiroom group)
+		`echo @@d; LUCI_local -r 92 2>/dev/null; echo @@E;`,
+		`echo @@g; LUCI_local -r 39 2>/dev/null; echo @@E;`,
+		// the FriendlyName read keeps spaces (suffix-strip, not first-word)
+		`case "$fn" in *Data:*) fn=${fn#*Data:}; fn=${fn% Length:*};; *) fn=;; esac;`,
+		`printf 'name=%s\n' "$fn"`,
 		// the new diag-gated gathers (all default to "-" so absent paths don't break the line)
 		`for ad in /proc/asound/card*/pcm*p/sub*; do`,
 		`buffer_size) bs=$av;;`,

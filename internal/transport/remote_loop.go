@@ -16,20 +16,24 @@ import (
 //
 // See lp10lib/transport.remote_loop for the full rationale (timing-based EOF
 // detection, adaptive idle cadence, two-step burst drain). It descends from the
-// Python version's loop; the Go port additionally emits two one-shot prologue records
-// before the loop: an @@i static device/network block (the active interface, its link
-// details, the data-partition usage, and the resolver) and an @@c capability block
-// (which streaming services are enabled — running daemons via pidof, env-gated
-// features via getenv — for the config view). It appends
+// Python version's loop; the Go port additionally emits four one-shot prologue
+// records before the loop: an @@i static device/network block (the active
+// interface, its link details, the FriendlyName from reg 90, the data-partition
+// usage, and the resolver), an @@c capability block (which streaming services
+// are enabled — running daemons via pidof, env-gated features via getenv — for
+// the config view), and the raw @@d device-details (reg 92: serial / MACs / MCU
+// + full firmware version) and @@g multiroom-group (reg 39) register reads,
+// parsed laptop-side. It appends
 // SoC temp, interface byte counters, Wi-Fi signal/link/noise, three ICMP ping RTTs
 // (laptop / gateway / internet), the ALSA audio chain (playback state, the DAC's
 // actual rate/format/channels, and the buffer fill from avail/buffer_size), the
-// current CPU clock, and the running/total process count to each @@s line, for the
-// diagnostics panel. Every added field defaults to "-" so hardware that lacks a
-// path (no /proc/asound, a fixed-clock CPU) degrades gracefully rather than
-// breaking the positional line. (xruns and rootfs% were dropped after an on-device
-// probe: the AR241CE's status file carries no xruns line, and / is a read-only
-// squashfs pinned at 100% — the writable space is /lsync, already reported.)
+// current CPU clock, the running/total process count, and the interface
+// error/drop counters to each @@s line, for the diagnostics panel. Every added
+// field defaults to "-" so hardware that lacks a path (no /proc/asound, a
+// fixed-clock CPU) degrades gracefully rather than breaking the positional
+// line. (xruns and rootfs% were dropped after an on-device probe: the
+// AR241CE's status file carries no xruns line, and / is a read-only squashfs
+// pinned at 100% — the writable space is /lsync, already reported.)
 //
 // Footprint is kept minimal — it shares the device with playback:
 //   - the resource stats (@@s: load/mem/temp/throughput/latency) are gathered and

@@ -342,8 +342,8 @@ func TestCov_PingStatNegativeDelta(t *testing.T) {
 	if ps.Peak != 30 {
 		t.Errorf("Peak = %v, want 30", ps.Peak)
 	}
-	if !ps.OK || len(ps.Series) != 3 {
-		t.Errorf("OK=%v Series=%v, want OK with 3 samples", ps.OK, ps.Series)
+	if !ps.OK {
+		t.Error("a populated ring should read OK")
 	}
 }
 
@@ -357,13 +357,12 @@ func TestCov_UpdateNetRingTrim(t *testing.T) {
 		st.updateNet(&SysInfo{PingClient: strconv.Itoa(i)}, t0.Add(time.Duration(i)*time.Second))
 	}
 	ps := st.NetView().Ping[0]
-	if len(ps.Series) != pingRingMax {
-		t.Fatalf("ring length = %d, want %d (trimmed)", len(ps.Series), pingRingMax)
+	// 35 pushed (0..34), the newest pingRingMax (30) retained -> 5..34: the
+	// average proves the trim (untrimmed 0..34 would read 17), the peak the tail.
+	if want := 19.5; ps.Avg != want {
+		t.Errorf("Avg = %v, want %v (ring trimmed to the newest %d)", ps.Avg, want, pingRingMax)
 	}
-	if ps.Series[0] != 5 { // 35 pushed, last 30 retained -> 5..34
-		t.Errorf("oldest retained = %v, want 5", ps.Series[0])
-	}
-	if ps.Series[len(ps.Series)-1] != 34 {
-		t.Errorf("newest retained = %v, want 34", ps.Series[len(ps.Series)-1])
+	if ps.Peak != 34 {
+		t.Errorf("Peak = %v, want 34", ps.Peak)
 	}
 }

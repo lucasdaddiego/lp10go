@@ -87,30 +87,10 @@ func FindLP10(nameHint string, timeout time.Duration) (Device, bool) {
 	sendAll()
 
 	// One reader goroutine per socket funnels raw packets to the collector, which
-	// only this goroutine touches (so no lock is needed). Closing done unblocks a
-	// reader parked on the channel send when we stop early; closing the sockets
-	// (deferred) unblocks one parked in ReadFromUDP — so no reader leaks.
+	// only this goroutine touches (so no lock is needed).
 	packets := make(chan []byte, 64)
 	done := make(chan struct{})
-	for _, c := range conns {
-		go func(c *net.UDPConn) {
-			buf := make([]byte, 9000)
-			for {
-				n, _, rerr := c.ReadFromUDP(buf)
-				if n > 0 {
-					p := append([]byte(nil), buf[:n]...)
-					select {
-					case packets <- p:
-					case <-done:
-						return
-					}
-				}
-				if rerr != nil {
-					return
-				}
-			}
-		}(c)
-	}
+	spawnReaders(conns, packets, done)
 
 	col := newCollector()
 	overall := time.NewTimer(timeout)
@@ -136,6 +116,32 @@ func FindLP10(nameHint string, timeout time.Duration) (Device, bool) {
 			close(done)
 			return pickLP10(col.devices(), nameHint) // timed out: accept a host-only match too
 		}
+	}
+}
+
+// spawnReaders starts one goroutine per socket, funneling each raw reply packet
+// into packets. Closing done unblocks a reader parked on the channel send when
+// the caller stops early; closing the sockets unblocks one parked in
+// ReadFromUDP — so no reader leaks either way.
+func spawnReaders(conns []*net.UDPConn, packets chan<- []byte, done <-chan struct{}) {
+	for _, c := range conns {
+		go func(c *net.UDPConn) {
+			buf := make([]byte, 9000)
+			for {
+				n, _, rerr := c.ReadFromUDP(buf)
+				if n > 0 {
+					p := append([]byte(nil), buf[:n]...)
+					select {
+					case packets <- p:
+					case <-done:
+						return
+					}
+				}
+				if rerr != nil {
+					return
+				}
+			}
+		}(c)
 	}
 }
 

@@ -75,9 +75,10 @@ func TestDiagShowsServicesAndHardware(t *testing.T) {
 	}
 }
 
-// The vitals ribbon carries a one-glance health verdict + the key live numbers,
-// health-colored, and the footer legend decodes the colors.
-func TestDiagVitalsRibbon(t *testing.T) {
+// The masthead stays minimal: the title, a one-glance health verdict, and the
+// connection light + clock — no inline vitals (every live number lives in its
+// section below) — and the footer legend decodes the verdict colours.
+func TestDiagMastheadVerdictOnly(t *testing.T) {
 	st := protocol.NewState()
 	applyFixtureRecords(st, "device_record.txt")
 	applyFixtureRecords(st, "playing_record.txt") // healthy metrics
@@ -89,13 +90,11 @@ func TestDiagVitalsRibbon(t *testing.T) {
 	if !hasRow(flat, "diagnostics", "healthy") {
 		t.Error("masthead should carry a health verdict beside the title")
 	}
-	// the status line packs the key health vitals onto one row (volume is a setting,
-	// not a vital — it lives in the audio section's gauge instead).
-	if !hasRow(flat, "diagnostics", "temp", "cpu", "mem", "buffer") {
-		t.Error("status line should pack temp/cpu/mem/buffer onto the title row")
-	}
-	if hasRow(flat, "diagnostics", "volume") {
-		t.Error("volume should not be a status-line vital")
+	// ...and nothing else rides the title row
+	for _, vital := range []string{"temp", "cpu", "mem", "buffer", "volume"} {
+		if hasRow(flat, "diagnostics", vital) {
+			t.Errorf("the title row should not carry a %q vital", vital)
+		}
 	}
 	// the colour legend rides the footer
 	if !hasRow(flat, "good", "warn", "fault") {
@@ -147,7 +146,7 @@ func TestDiagIdleBufferNotFault(t *testing.T) {
 	if !hasRow(flat, "diagnostics", "healthy") {
 		t.Error("an otherwise-healthy idle device should read healthy")
 	}
-	if !strings.Contains(flat, "idle") { // the buffer row is labelled idle, not "ring"
+	if !strings.Contains(flat, "idle") { // the buffer row is labelled idle, not "full"
 		t.Error("an idle buffer row should be labelled idle")
 	}
 }

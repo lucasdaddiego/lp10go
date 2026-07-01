@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/lucasdaddiego/lp10/internal/atomicfile"
 )
 
 // homeDir resolves the user's home directory, falling back to the passwd
@@ -208,28 +210,6 @@ func ArtCacheDir() string {
 	return ""
 }
 
-// atomicWrite writes via a deterministic .tmp sibling then renames: a writer
-// frozen mid-write leaves exactly one well-known file, overwritten next run.
-func atomicWrite(path, text string) {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return
-	}
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-	}
-}
-
 func clampVol(v int) int {
 	if v < 1 {
 		return 1
@@ -262,7 +242,7 @@ func SavePremute(path string, v int) {
 	if path == "" {
 		return
 	}
-	atomicWrite(path, strconv.Itoa(clampVol(v)))
+	_ = atomicfile.Write(path, []byte(strconv.Itoa(clampVol(v))))
 }
 
 // LoadSnapshot reads the cached snapshot. A corrupt file (not an object, or a
@@ -300,5 +280,5 @@ func SaveSnapshot(path string, snap any) {
 	if err != nil {
 		return
 	}
-	atomicWrite(path, string(b))
+	_ = atomicfile.Write(path, b)
 }

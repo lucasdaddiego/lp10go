@@ -247,22 +247,6 @@ func TestSlug(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteCleanup(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "test.txt")
-	atomicWrite(path, "test content")
-	if _, err := os.Stat(path); err != nil {
-		t.Error("file should exist after atomicWrite")
-	}
-	if _, err := os.Stat(path + ".tmp"); err == nil {
-		t.Error(".tmp should be gone after success")
-	}
-	badPath := filepath.Join(t.TempDir(), "nonexistent", "test.txt")
-	atomicWrite(badPath, "test") // must not panic
-	if _, err := os.Stat(badPath + ".tmp"); err == nil {
-		t.Error(".tmp should not linger after a failed write")
-	}
-}
-
 func TestSavePremuteWithIOErrorIsSwallowed(t *testing.T) {
 	badPath := filepath.Join(t.TempDir(), "nonexistent", "premute")
 	SavePremute(badPath, 50) // must not panic

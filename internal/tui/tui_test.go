@@ -591,81 +591,47 @@ func TestMarqueeFitsAndScrolls(t *testing.T) {
 	}
 }
 
-// ---- latency sparklines -----------------------------------------------------
+// ---- latency rows -------------------------------------------------------------
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
-func TestSparkline(t *testing.T) {
-	if got := sparkline(nil, 10); got != "" {
-		t.Errorf("empty series = %q, want \"\"", got)
-	}
-	if got := sparkline([]float64{5, 5, 5}, 10); got != "▁▁▁" {
-		t.Errorf("flat series = %q, want all-low", got)
-	}
-	// a rising ramp spans the full glyph range, low → high
-	got := []rune(sparkline([]float64{0, 1, 2, 3}, 10))
-	if got[0] != '▁' || got[len(got)-1] != '█' {
-		t.Errorf("ramp = %q, want ▁…█", string(got))
-	}
-	// a lone spike towers over a flat baseline
-	spike := []rune(sparkline([]float64{6, 6, 6, 48, 6}, 10))
-	if spike[3] != '█' || spike[0] != '▁' {
-		t.Errorf("spike = %q, want a single tall bar", string(spike))
-	}
-	// steady latency with mere jitter must stay a calm low band — never amplified
-	// into full-height bars (the bug that made the latency graph look like noise)
-	for _, r := range sparkline([]float64{6, 7, 8, 7, 6, 8, 7}, 10) {
-		if r == '█' || r == '▇' || r == '▆' {
-			t.Errorf("jitter %q amplified to a tall bar; want a low band", string(r))
-			break
-		}
-	}
-	// maxW keeps only the most recent samples
-	if got := sparkline([]float64{0, 0, 0, 9}, 2); len([]rune(got)) != 2 {
-		t.Errorf("width-capped len = %d, want 2", len([]rune(got)))
-	}
-}
-
-func TestLatencyRowRendersNumbersAndSparkline(t *testing.T) {
+func TestLatencyRowRendersNumbers(t *testing.T) {
 	m, _, _ := modelWith(protocol.NewState())
 	m.sty = newTheme() // normally lazily set on first View()
-	ps := protocol.PingStat{Avg: 6.6, Jitter: 1.1, Peak: 48,
-		Series: []float64{6, 6, 7, 48, 6, 6}, OK: true}
-	row := stripANSI(m.latencyRow("gw", ps, 20))
-	for _, want := range []string{"gw", "6.6 ms", "±1.1", "max 48", "█", "▁"} {
+	ps := protocol.PingStat{Avg: 6.6, Jitter: 1.1, Peak: 48, OK: true}
+	row := stripANSI(m.latencyRow("gw", ps))
+	for _, want := range []string{"gw", "6.6 ms", "±1.1", "max 48"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("latency row missing %q in %q", want, row)
 		}
 	}
-	// eyeball cross-row alignment: differing avg widths must keep columns lined up
-	you := protocol.PingStat{Avg: 11, Jitter: 6.6, Peak: 31, Series: []float64{8, 9, 31, 10, 8}, OK: true}
-	net := protocol.PingStat{Avg: 25, Jitter: 2, Peak: 29, Series: []float64{24, 25, 26, 29, 25}, OK: true}
-	t.Logf("\n%s\n%s\n%s",
-		stripANSI(m.latencyRow("you", you, 20)),
-		row,
-		stripANSI(m.latencyRow("spotify", net, 20)))
+	// no block glyphs: the old per-row sparkline rendered as ragged boxes on fonts
+	// whose block elements don't fill the cell, so the row is plain text on purpose
+	if strings.ContainsAny(row, "▁▂▃▄▅▆▇█") {
+		t.Errorf("latency row should be plain text, got %q", row)
+	}
 }
 
-// TestLatencyRowSparklineColumnMatchesFixedCols pins latencyFixedCols to the actual
-// row layout: latencyRow renders everything right of the diag label (diagLine
-// prepends that), so its sparkline must begin exactly latencyFixedCols-diagLabelW
-// columns in. If a field width or separator changes without latencyFixedCols, the
-// sparkline clips or the three rows stop lining up — this catches that.
-func TestLatencyRowSparklineColumnMatchesFixedCols(t *testing.T) {
+// The numeric fields are fixed-width, so the peak column starts at the same
+// display column across rows with differently-sized values — the three targets
+// must line up.
+func TestLatencyRowColumnsAlign(t *testing.T) {
 	m, _, _ := modelWith(protocol.NewState())
 	m.sty = newTheme() // normally lazily set on first View()
-	ps := protocol.PingStat{Avg: 6.6, Jitter: 1.1, Peak: 48, Series: []float64{1, 8}, OK: true}
-	row := stripANSI(m.latencyRow("you", ps, 8))
-	start := strings.IndexAny(row, string(sparkRunes))
-	if start < 0 {
-		t.Fatalf("no sparkline rune in %q", row)
+	rows := []string{
+		stripANSI(m.latencyRow("you", protocol.PingStat{Avg: 1.2, Jitter: 0.3, Peak: 2.1, OK: true})),
+		stripANSI(m.latencyRow("gw", protocol.PingStat{Avg: 11, Jitter: 6.6, Peak: 31, OK: true})),
+		stripANSI(m.latencyRow("spotify", protocol.PingStat{Avg: 250, Jitter: 12, Peak: 900, OK: true})),
 	}
-	if got, want := DispW(row[:start]), latencyFixedCols-diagLabelW; got != want {
-		t.Errorf("sparkline starts at column %d, want %d (latencyFixedCols %d - diagLabelW %d)",
-			got, want, latencyFixedCols, diagLabelW)
+	want := strings.Index(rows[0], "max ")
+	for _, r := range rows[1:] {
+		if got := strings.Index(r, "max "); got != want {
+			t.Errorf("peak column at %d, want %d: %q", got, want, r)
+		}
 	}
+	t.Logf("\n%s\n%s\n%s", rows[0], rows[1], rows[2])
 }
 
 func TestDiagLatencyBlockFullRender(t *testing.T) {
@@ -688,12 +654,9 @@ func TestDiagLatencyBlockFullRender(t *testing.T) {
 	m.rows, m.cols = 44, 100
 	m.diag = true
 	full := stripANSI(m.View())
-	// the gateway row's peak must have caught the 48ms spike, with a sparkline
+	// the gateway row's peak-hold must have caught the 48ms spike
 	if !strings.Contains(full, "max 48") {
 		t.Error("gateway peak-hold should show the 48ms spike (max 48)")
-	}
-	if !strings.Contains(full, "█") {
-		t.Error("a sparkline should render in the latency block")
 	}
 	// log the network→audio slice for eyeballing
 	lines := strings.SplitSeq(full, "\n")

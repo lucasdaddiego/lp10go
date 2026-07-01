@@ -32,6 +32,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/lucasdaddiego/lp10/internal/atomicfile"
 )
 
 const (
@@ -172,6 +174,8 @@ func cacheFile(dir, url string) string {
 	if dir == "" {
 		return ""
 	}
+	// sha1 as a content-addressed filename only — a stable, short cache key, not
+	// a security boundary (a gosec/CodeQL "weak hash" hit here is a false positive).
 	sum := sha1.Sum([]byte(url))
 	return filepath.Join(dir, hex.EncodeToString(sum[:]))
 }
@@ -189,15 +193,9 @@ func loadCache(dir, url string) ([]byte, bool) {
 }
 
 func saveCache(dir, url string, raw []byte) {
-	p := cacheFile(dir, url)
-	if p == "" {
-		return
+	if p := cacheFile(dir, url); p != "" {
+		_ = atomicfile.Write(p, raw) // best effort; a lost cache write just refetches
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, p) // best effort; a lost cache write just refetches
 }
 
 // HalfBlock rasterizes img into a wCells×hCells grid of upper-half-block glyphs.

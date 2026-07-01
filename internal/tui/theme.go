@@ -366,3 +366,10 @@ func (t *theme) vbar(frac float64, h int) []string {
 }
 
 func clampF(f float64) float64 { return clampRange(f, 0, 1) }
+
+// Shared alert tokens: the warn amber and the bold alarm red used across the
+// player, EQ, and diagnostics views (header states, MUTED, error lines).
+var (
+	stWarn = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0b34d"))
+	stRed  = lipgloss.NewStyle().Foreground(lipgloss.Color("#e2655f")).Bold(true)
+)

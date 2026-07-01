@@ -32,7 +32,8 @@ func TestDiagCardsLayoutWide(t *testing.T) {
 	flat := clean(view)
 	for _, want := range []string{
 		"diagnostics",
-		"─ device", "─ network", "─ hardware", "─ audio", "─ resources", "─ latency", "─ services",
+		"─ audio", "─ connection", "─ device", "─ hardware", "─ latency", "─ network",
+		"─ resources", "─ services",
 		"dac", "S16_LE", "● live", "buffer",
 		"tasks", "running", "1200 MHz",
 	} {
@@ -40,9 +41,16 @@ func TestDiagCardsLayoutWide(t *testing.T) {
 			t.Errorf("wide diag missing %q", want)
 		}
 	}
-	// the two columns sit side by side: device (left) and audio (right) share a row.
-	if !hasRow(flat, "─ device", "─ audio") {
-		t.Error("wide diag should place the device and audio columns side by side")
+	// the two columns sit side by side and the sections run alphabetically: with
+	// this fixture's heights the balanced split puts audio/connection/device/
+	// hardware left and latency/network/resources/services right, so audio (first
+	// left) shares its row with latency (first right).
+	if !hasRow(flat, "─ audio", "─ latency") {
+		t.Error("wide diag should place the audio and latency section heads side by side")
+	}
+	// alphabetical flow: audio tops the left column, i.e. it renders above device.
+	if strings.Index(flat, "─ audio") > strings.Index(flat, "─ device") {
+		t.Error("sections should run alphabetically (audio before device)")
 	}
 	// every framed line stays exactly cols wide (section padding measured by visible width)
 	for i, ln := range strings.Split(view, "\n") {
@@ -53,7 +61,7 @@ func TestDiagCardsLayoutWide(t *testing.T) {
 
 	// A narrow terminal falls back to the single-column stacked read-out.
 	m.cols = 90
-	if hasRow(clean(m.View()), "─ device", "─ audio") {
+	if hasRow(clean(m.View()), "─ audio", "─ latency") {
 		t.Error("narrow diag should stack the sections, not place them side by side")
 	}
 }

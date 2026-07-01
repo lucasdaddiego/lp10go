@@ -9,6 +9,13 @@ duplex=full
 build=2025-12-24
 app=312
 platform=LS8
+name=Living
 data=1258291 7340032
 dns=192.168.1.1
+@@E
+@@d
+MID-Read:92 Data:{"macaddress":{"bt":"aa:bb:cc:dd:ee:fe","eth0":"aa:bb:cc:dd:ee:ff","wlan0":"aa:bb:cc:dd:ee:fd"},"serialnumber":{"device_serialnumber":"RKARYLLP100000000000"},"versioninfo":{"devicefwversion":"AR241CE_9243.16.2","mcuversion":"16"}} Length:230
+@@E
+@@g
+MID-Read:39 Data:{"devices":[]} Length:14
 @@E

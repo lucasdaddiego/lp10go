@@ -272,16 +272,6 @@ func TestCov_hslHexAllArms(t *testing.T) {
 	}
 }
 
-func TestCov_sparklineAllZero(t *testing.T) {
-	// an all-zero series has zero span (and zero floor) -> the span>0 false branch
-	if got := sparkline([]float64{0, 0, 0}, 5); got != "▁▁▁" {
-		t.Errorf("sparkline(zeros) = %q, want ▁▁▁", got)
-	}
-	if got := sparkline([]float64{1, 2, 3, 4}, 2); len([]rune(got)) != 2 {
-		t.Errorf("sparkline width cap len = %d, want 2", len([]rune(got)))
-	}
-}
-
 // ============================================================================
 // mouse.go fraction mappers
 // ============================================================================
@@ -892,41 +882,21 @@ func TestCov_eqSliderRow(t *testing.T) {
 }
 
 // ============================================================================
-// eqReadout — empty and a full map
-// ============================================================================
-
-func TestCov_eqReadout(t *testing.T) {
-	m, _, _ := modelWith(protocol.NewState())
-	m.sty = newTheme()
-	if got := stripANSI(m.eqReadout(map[string]int{})); got != "—" {
-		t.Errorf("eqReadout(empty) = %q, want —", got)
-	}
-	full := map[string]int{"EQS": 1, "TRE": 3, "MID": -2, "BAS": 5, "VBS": 1, "VBI": 40, "MXV": 100}
-	got := stripANSI(m.eqReadout(full))
-	for _, want := range []string{"EQ on", "T +3", "M -2", "B +5", "Sub on 40", "Max Vol 100"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("eqReadout missing %q in %q", want, got)
-		}
-	}
-	// the EQS-off and VBS-off arms
-	off := stripANSI(m.eqReadout(map[string]int{"EQS": 0, "VBS": 0}))
-	if !strings.Contains(off, "EQ off") || !strings.Contains(off, "Sub off") {
-		t.Errorf("eqReadout off arms = %q", off)
-	}
-}
-
-// ============================================================================
 // clipStyled — fits and overflows
 // ============================================================================
 
 func TestCov_clipStyled(t *testing.T) {
-	m, _, _ := modelWith(protocol.NewState())
-	m.sty = newTheme()
-	if got := m.clipStyled("abc", 10); got != "abc" {
+	if got := clipStyled("abc", 10); got != "abc" {
 		t.Errorf("clipStyled fits = %q", got)
 	}
-	if got := m.clipStyled("abcdefgh", 4); stripANSI(got) != "abc"+GL["ell"] {
+	if got := clipStyled("abcdefgh", 4); stripANSI(got) != "abc"+GL["ell"] {
 		t.Errorf("clipStyled overflow = %q", stripANSI(got))
+	}
+	if got := clipStyled("abcdefgh", 0); got != "" {
+		t.Errorf("clipStyled w=0 = %q, want empty", got)
+	}
+	if got := clipStyled("abcdefgh", 1); stripANSI(got) != "a" {
+		t.Errorf("clipStyled no-ellipsis-room = %q, want hard cut", stripANSI(got))
 	}
 }
 
@@ -1174,14 +1144,6 @@ func TestCov_stackRegionClamp(t *testing.T) {
 	}
 }
 
-func TestCov_sparklineDecreasing(t *testing.T) {
-	// a falling series exercises the running-min (v<lo) update
-	got := []rune(sparkline([]float64{9, 5, 1}, 10))
-	if got[0] != '█' || got[len(got)-1] != '▁' {
-		t.Errorf("falling sparkline = %q, want high…low", string(got))
-	}
-}
-
 func TestCov_metaLinesVariants(t *testing.T) {
 	m, _, _ := makeModel(t)
 	m.sty = newTheme()
@@ -1289,9 +1251,9 @@ func TestCov_eqSliderRowTogglePadClamp(t *testing.T) {
 }
 
 // ============================================================================
-// Rich diagnostics scenarios — Wi-Fi cards/stacked arms: muted volume, warn/red
-// health bands, buffer fill bands, latency spike, SNR vs link-quality detail,
-// the channel count, the discovered tag, and the "LUCI silent" header.
+// Rich diagnostics scenarios — Wi-Fi cards/stacked arms: warn/red health
+// bands, buffer fill bands, latency spike, SNR vs link-quality detail, the
+// channel count, the discovered tag, and the "LUCI silent" header.
 // ============================================================================
 
 // sBase is a 26-field @@s heartbeat (see protocol @@s field order). sRec clones
@@ -1312,7 +1274,7 @@ func sRec(over map[int]string) string {
 	return "@@s\n" + strings.Join(f, " ") + "\n@@E\n"
 }
 
-// richDiag builds a connected, muted, Wi-Fi state with warn/red metrics, a
+// richDiag builds a connected Wi-Fi state with warn/red metrics, a
 // channel-count track, a tunnel-live flag, and a latency spike. over patches the
 // final @@s sample (e.g. to drive a different buffer-fill band).
 func richDiag(t *testing.T, freq string, over map[int]string) (*model, *protocol.State) {
@@ -1342,7 +1304,7 @@ func TestCov_diagRichCards(t *testing.T) {
 	m.rows, m.cols = 44, 120
 	m.diag = true
 	out := clean(m.View())
-	for _, want := range []string{"5 GHz", "ch 36", "snr", "muted", "2 ch", "mDNS", "live", "─ latency"} {
+	for _, want := range []string{"5 GHz", "ch 36", "snr", "2 ch", "mDNS", "live", "─ latency", "─ connection"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rich cards diag missing %q", want)
 		}
@@ -1354,7 +1316,7 @@ func TestCov_diagRichStacked(t *testing.T) {
 	m.rows, m.cols = 44, 99
 	m.diag = true
 	out := clean(m.View())
-	for _, want := range []string{"5 GHz", "muted", "link 50/70", "mDNS"} {
+	for _, want := range []string{"5 GHz", "link 50/70", "mDNS"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rich stacked diag missing %q", want)
 		}
@@ -1469,8 +1431,8 @@ func TestCov_latencyRowWideFields(t *testing.T) {
 	m, _, _ := modelWith(protocol.NewState())
 	m.sty = newTheme()
 	// a long name and wide numeric fields make the inner pad/rpad no-ops (return s)
-	ps := protocol.PingStat{Avg: 12345, Jitter: 6789, Peak: 99999, Series: []float64{1, 2}, OK: true}
-	row := stripANSI(m.latencyRow("verylongname", ps, 8))
+	ps := protocol.PingStat{Avg: 12345, Jitter: 6789, Peak: 99999, OK: true}
+	row := stripANSI(m.latencyRow("verylongname", ps))
 	if !strings.Contains(row, "verylongname") || !strings.Contains(row, "12345") {
 		t.Errorf("wide latency row = %q", row)
 	}
@@ -1528,9 +1490,9 @@ func TestCov_ghostCoverKittyDegrade(t *testing.T) {
 	}
 }
 
-func TestCov_diagCardsNarrowSparkW(t *testing.T) {
-	// driving the card grid below its width floor squeezes the per-target sparkline
-	// column below its minimum (the sw<4 clamp in the latency-card builder).
+func TestCov_diagCardsNarrowStillRenders(t *testing.T) {
+	// driving the card grid far below its width floor must degrade (clip) rather
+	// than panic or produce nothing.
 	m, st := richDiag(t, "5180", nil)
 	m.sty = newTheme()
 	m.rows = 44
