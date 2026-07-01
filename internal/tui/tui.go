@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/lucasdaddiego/lp10/internal/config"
+	"github.com/lucasdaddiego/lp10/internal/mediakey"
 	"github.com/lucasdaddiego/lp10/internal/protocol"
 	"github.com/lucasdaddiego/lp10/internal/tunnel"
 	"github.com/lucasdaddiego/lp10/internal/workers"
@@ -177,6 +178,24 @@ func cellPixelSize() (w, h int) {
 // motif cache makes those wake-ups nearly free.
 type logicMsg struct{}
 type frameMsg struct{}
+
+// mediaKeyMsg carries a macOS media transport key captured by the background
+// event tap (internal/mediakey). It is delivered through the program so the
+// action runs on the update loop — the tap thread must never touch model state.
+type mediaKeyMsg struct{ action string }
+
+// keyToAction maps a captured media key to the transport action do() understands.
+func keyToAction(k mediakey.Key) (action string, ok bool) {
+	switch k {
+	case mediakey.PlayPause:
+		return "toggle", true
+	case mediakey.Next:
+		return "next", true
+	case mediakey.Prev:
+		return "prev", true
+	}
+	return "", false
+}
 
 const (
 	logicInterval = 100 * time.Millisecond
@@ -511,6 +530,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		}
+		return m, nil
+	case mediaKeyMsg:
+		m.do(msg.action)
 		return m, nil
 	}
 	return m, nil
@@ -1640,6 +1662,27 @@ func Run(cfg config.Config) (int, error) {
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	p := tea.NewProgram(m, opts...)
+
+	// Media transport keys (macOS): drive the device from the keyboard's
+	// play/pause, next, and prev even when lp10 isn't focused. The tap only
+	// consumes the keys while connected, so they pass through to other apps when
+	// the device is away. No-op on non-macOS; best-effort if the tap can't be
+	// installed (Accessibility not granted) — note it and carry on.
+	stopKeys, keyErr := mediakey.Start(mediakey.Config{
+		Connected: func() bool { return st.Snap().Connected },
+		OnKey: func(k mediakey.Key) {
+			if action, ok := keyToAction(k); ok {
+				p.Send(mediaKeyMsg{action: action})
+			}
+		},
+		// Fires only when the tap re-arms after an earlier denial (Accessibility
+		// granted mid-session), confirming the keys are now live.
+		OnActive: func() { st.Note("media keys on") },
+	})
+	if keyErr != nil {
+		st.Note("media keys off — " + keyErr.Error())
+	}
+	defer stopKeys()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
